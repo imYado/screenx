@@ -1,0 +1,355 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Desk Deck">
+<meta name="theme-color" content="#000000">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-180.png">
+<title>Desk Deck</title>
+<style>
+  :root {
+    --bg: #000;
+    --fg: #f5f5f7;
+    --dim: #8e8e93;
+    --card: #141416;
+    --line: #2a2a2e;
+    --accent: #0a84ff;
+    --sl: env(safe-area-inset-left, 0px);
+    --sr: env(safe-area-inset-right, 0px);
+    --st: env(safe-area-inset-top, 0px);
+    --sb: env(safe-area-inset-bottom, 0px);
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); overflow: hidden; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", Roboto, sans-serif;
+    -webkit-user-select: none; user-select: none; -webkit-touch-callout: none;
+    touch-action: manipulation;
+  }
+  #app {
+    position: fixed; inset: 0;
+    padding: calc(var(--st) + 14px) calc(var(--sr) + 14px) calc(var(--sb) + 10px) calc(var(--sl) + 14px);
+    display: grid; gap: 14px;
+    grid-template-columns: 1fr 1fr;
+    grid-template-rows: 100%;
+    transition: transform 2s ease, opacity .6s ease;
+  }
+  body.dim #app { opacity: .35; }
+
+  /* ---------- left column ---------- */
+  .left { display: flex; flex-direction: column; min-width: 0; min-height: 0; gap: 10px; }
+  .clock { flex: 1; display: flex; flex-direction: column; justify-content: center; min-height: 0; cursor: pointer; }
+  #time {
+    font-size: clamp(56px, 22vh, 140px);
+    font-weight: 200; letter-spacing: -0.03em; line-height: .95;
+    font-variant-numeric: tabular-nums; white-space: nowrap;
+  }
+  #time .ampm { font-size: .3em; font-weight: 400; color: var(--dim); margin-left: .15em; letter-spacing: 0; }
+  #date { font-size: clamp(15px, 5vh, 24px); color: var(--dim); margin-top: 6px; font-weight: 500; }
+
+  .np {
+    background: var(--card); border-radius: 18px; padding: 10px;
+    display: grid; grid-template-columns: auto 1fr; gap: 12px; align-items: center;
+    min-height: 0;
+  }
+  .art {
+    width: clamp(56px, 21vh, 92px); aspect-ratio: 1; border-radius: 10px;
+    background: #2c2c2e center/cover no-repeat;
+    display: grid; place-items: center; font-size: 28px; color: var(--dim);
+  }
+  .np-body { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+  .np-title, .np-artist { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .np-title { font-size: 16px; font-weight: 600; }
+  .np-artist { font-size: 13px; color: var(--dim); }
+  .bar { height: 4px; background: var(--line); border-radius: 2px; overflow: hidden; margin-top: 2px; }
+  .bar > i { display: block; height: 100%; width: 0; background: var(--fg); border-radius: 2px; }
+  .times { display: flex; justify-content: space-between; font-size: 10px; color: var(--dim); font-variant-numeric: tabular-nums; }
+  .ctrls { display: flex; justify-content: space-around; align-items: center; margin-top: 2px; }
+  .ctrls button {
+    background: none; border: 0; color: var(--fg); padding: 4px 14px; border-radius: 12px;
+    display: grid; place-items: center; cursor: pointer;
+  }
+  .ctrls button:active { background: #2c2c2e; }
+  .ctrls svg { width: 22px; height: 22px; fill: currentColor; }
+  .ctrls .pp svg { width: 30px; height: 30px; }
+
+  /* ---------- button pad ---------- */
+  .pad { min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: 6px; }
+  .pages {
+    flex: 1; min-height: 0; display: flex; overflow-x: auto; overflow-y: hidden;
+    scroll-snap-type: x mandatory; scrollbar-width: none; border-radius: 18px;
+  }
+  .pages::-webkit-scrollbar { display: none; }
+  .page {
+    flex: 0 0 100%; scroll-snap-align: start;
+    display: grid; grid-template-columns: repeat(3, 1fr); grid-template-rows: repeat(3, 1fr); gap: 10px;
+  }
+  .btn {
+    position: relative; border: 0; border-radius: 18px; padding: 6px;
+    background: color-mix(in srgb, var(--c) 22%, #141416);
+    color: var(--fg); font: inherit; cursor: pointer;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
+    transition: transform .08s ease, background .15s ease;
+    overflow: hidden;
+  }
+  @supports not (background: color-mix(in srgb, red 50%, blue)) {
+    .btn { background: #1c1c1e; box-shadow: inset 0 0 0 2px var(--c); }
+  }
+  .btn .ic { font-size: clamp(22px, 9vh, 34px); line-height: 1; }
+  .btn .lb { font-size: 12px; font-weight: 600; color: #d1d1d6; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+  .btn:active { transform: scale(.94); }
+  .btn.ok { background: color-mix(in srgb, var(--c) 55%, #141416); }
+  .btn.err { background: #5a1d1d; }
+  .dots { display: flex; justify-content: center; gap: 6px; height: 6px; }
+  .dots i { width: 6px; height: 6px; border-radius: 3px; background: var(--line); }
+  .dots i.on { background: var(--dim); }
+
+  .status { position: fixed; top: calc(var(--st) + 6px); right: calc(var(--sr) + 8px); width: 7px; height: 7px; border-radius: 4px; background: #30d158; opacity: .6; }
+  .status.off { background: #ff453a; opacity: 1; }
+
+  /* ---------- portrait ---------- */
+  @media (orientation: portrait) {
+    #app { grid-template-columns: 100%; grid-template-rows: auto 1fr; }
+    #time { font-size: clamp(64px, 24vw, 120px); }
+    .clock { flex: none; padding: 8px 0 4px; }
+    .pad { min-height: 0; }
+  }
+
+  /* ---------- PIN screen ---------- */
+  #pin {
+    position: fixed; inset: 0; background: #000; z-index: 10;
+    display: none; flex-direction: column; align-items: center; justify-content: center; gap: 14px; padding: 20px;
+  }
+  #pin.show { display: flex; }
+  #pin h1 { margin: 0; font-size: 22px; font-weight: 600; }
+  #pin p { margin: 0; color: var(--dim); font-size: 14px; text-align: center; }
+  #pin input {
+    font-size: 28px; letter-spacing: .4em; text-align: center; width: 220px; padding: 10px;
+    border-radius: 14px; border: 1px solid var(--line); background: var(--card); color: var(--fg);
+  }
+  #pin button { font-size: 17px; padding: 10px 28px; border-radius: 14px; border: 0; background: var(--accent); color: #fff; font-weight: 600; }
+  #pin .err { color: #ff453a; min-height: 1em; }
+</style>
+</head>
+<body>
+<div id="app">
+  <section class="left">
+    <div class="clock" id="clock" title="Tap: 12/24h · Long-press: dim">
+      <div id="time">--:--</div>
+      <div id="date"></div>
+    </div>
+    <div class="np">
+      <div class="art" id="art">♪</div>
+      <div class="np-body">
+        <div class="np-title" id="title">Nothing playing</div>
+        <div class="np-artist" id="artist">&nbsp;</div>
+        <div class="bar"><i id="prog"></i></div>
+        <div class="times"><span id="pos">0:00</span><span id="dur">0:00</span></div>
+        <div class="ctrls">
+          <button data-media="prev" aria-label="Previous"><svg viewBox="0 0 24 24"><path d="M6 6h2v12H6zM9.5 12 18 6v12z"/></svg></button>
+          <button data-media="play_pause" class="pp" aria-label="Play/Pause"><svg viewBox="0 0 24 24" id="ppicon"><path d="M8 5v14l11-7z"/></svg></button>
+          <button data-media="next" aria-label="Next"><svg viewBox="0 0 24 24"><path d="M16 6h2v12h-2zM6 18l8.5-6L6 6z"/></svg></button>
+        </div>
+      </div>
+    </div>
+  </section>
+  <section class="pad">
+    <div class="pages" id="pages"></div>
+    <div class="dots" id="dots"></div>
+  </section>
+</div>
+<div class="status" id="status"></div>
+
+<div id="pin">
+  <h1>Desk Deck</h1>
+  <p>Enter the PIN shown in the window on your PC.</p>
+  <input id="pinInput" inputmode="numeric" pattern="[0-9]*" maxlength="6" autocomplete="off">
+  <button id="pinGo">Connect</button>
+  <div class="err" id="pinErr"></div>
+</div>
+
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const store = {
+    get(k, d) { try { const v = localStorage.getItem(k); return v === null ? d : v; } catch { return d; } },
+    set(k, v) { try { localStorage.setItem(k, v); } catch {} },
+  };
+
+  // ---------- PIN ----------
+  const urlPin = new URLSearchParams(location.search).get('pin');
+  if (urlPin) store.set('pin', urlPin);
+  let pin = store.get('pin', '');
+
+  function api(path, opts = {}) {
+    return fetch(path, { ...opts, headers: { 'X-Pin': pin, ...(opts.headers || {}) }, cache: 'no-store' })
+      .then(r => { if (r.status === 401) { askPin('Wrong PIN, try again.'); throw new Error('pin'); } return r; });
+  }
+  function askPin(msg = '') {
+    $('pinErr').textContent = msg;
+    $('pin').classList.add('show');
+    $('pinInput').value = '';
+  }
+  $('pinGo').onclick = () => {
+    pin = $('pinInput').value.trim();
+    store.set('pin', pin);
+    $('pin').classList.remove('show');
+    start();
+  };
+  $('pinInput').addEventListener('keydown', e => { if (e.key === 'Enter') $('pinGo').click(); });
+
+  // ---------- clock ----------
+  let h24 = store.get('h24', '0') === '1';
+  const days = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+  const months = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+  function tick() {
+    const d = new Date();
+    let h = d.getHours(), m = String(d.getMinutes()).padStart(2, '0');
+    if (h24) {
+      $('time').textContent = `${String(h).padStart(2, '0')}:${m}`;
+    } else {
+      const ap = h >= 12 ? 'PM' : 'AM';
+      h = h % 12 || 12;
+      $('time').innerHTML = `${h}:${m}<span class="ampm">${ap}</span>`;
+    }
+    $('date').textContent = `${days[d.getDay()]}, ${months[d.getMonth()]} ${d.getDate()}`;
+  }
+  tick();
+  setInterval(tick, 1000);
+
+  // tap = 12/24h, long-press = dim
+  let pressT, longFired = false;
+  const clock = $('clock');
+  clock.addEventListener('pointerdown', () => {
+    longFired = false;
+    pressT = setTimeout(() => { longFired = true; document.body.classList.toggle('dim'); }, 600);
+  });
+  clock.addEventListener('pointerup', () => {
+    clearTimeout(pressT);
+    if (!longFired) { h24 = !h24; store.set('h24', h24 ? '1' : '0'); tick(); }
+  });
+  clock.addEventListener('pointerleave', () => clearTimeout(pressT));
+
+  // OLED burn-in protection: drift the layout a few pixels every minute
+  setInterval(() => {
+    const x = Math.round(Math.random() * 8 - 4), y = Math.round(Math.random() * 6 - 3);
+    $('app').style.transform = `translate(${x}px, ${y}px)`;
+  }, 60000);
+
+  // keep screen awake where supported
+  async function wake() { try { if ('wakeLock' in navigator) await navigator.wakeLock.request('screen'); } catch {} }
+  wake();
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) { wake(); poll(); } });
+
+  // ---------- button pad ----------
+  function flash(el, cls) { el.classList.add(cls); setTimeout(() => el.classList.remove(cls), 350); }
+  async function loadButtons() {
+    const list = await api('/api/buttons').then(r => r.json());
+    const pages = $('pages'), dots = $('dots');
+    pages.innerHTML = ''; dots.innerHTML = '';
+    const n = Math.max(1, Math.ceil(list.length / 9));
+    for (let p = 0; p < n; p++) {
+      const page = document.createElement('div');
+      page.className = 'page';
+      list.slice(p * 9, p * 9 + 9).forEach(b => {
+        const el = document.createElement('button');
+        el.className = 'btn';
+        el.style.setProperty('--c', b.color || '#3a3a3c');
+        el.innerHTML = `<span class="ic"></span><span class="lb"></span>`;
+        el.querySelector('.ic').textContent = b.icon || '•';
+        el.querySelector('.lb').textContent = b.label || '';
+        el.onclick = () => api(`/api/button/${encodeURIComponent(b.id)}`, { method: 'POST' })
+          .then(r => flash(el, r.ok ? 'ok' : 'err')).catch(() => flash(el, 'err'));
+        page.appendChild(el);
+      });
+      pages.appendChild(page);
+      dots.appendChild(document.createElement('i'));
+    }
+    const upd = () => {
+      const i = Math.round(pages.scrollLeft / Math.max(1, pages.clientWidth));
+      [...dots.children].forEach((d, j) => d.classList.toggle('on', i === j));
+    };
+    pages.onscroll = upd; upd();
+    dots.style.visibility = n > 1 ? 'visible' : 'hidden';
+  }
+
+  // ---------- now playing ----------
+  const PLAY = '<path d="M8 5v14l11-7z"/>';
+  const PAUSE = '<path d="M6 5h4v14H6zM14 5h4v14h-4z"/>';
+  let media = null, mediaAt = 0, artVer = null;
+  const fmt = s => { s = Math.max(0, Math.floor(s || 0)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
+
+  function renderMedia() {
+    const m = media;
+    if (!m || !m.available) {
+      $('title').textContent = 'Nothing playing';
+      $('artist').innerHTML = '&nbsp;';
+      $('prog').style.width = '0';
+      $('pos').textContent = $('dur').textContent = '0:00';
+      $('ppicon').innerHTML = PLAY;
+      if (artVer !== null) { $('art').style.backgroundImage = ''; $('art').textContent = '♪'; artVer = null; }
+      return;
+    }
+    $('title').textContent = m.title || 'Unknown';
+    $('artist').textContent = [m.artist, m.app].filter(Boolean).join(' · ') || ' ';
+    $('ppicon').innerHTML = m.playing ? PAUSE : PLAY;
+    let pos = m.position;
+    if (m.playing) pos += (Date.now() - mediaAt) / 1000;
+    if (m.duration) pos = Math.min(pos, m.duration);
+    $('prog').style.width = m.duration ? `${(pos / m.duration) * 100}%` : '0';
+    $('pos').textContent = fmt(pos);
+    $('dur').textContent = m.duration ? fmt(m.duration) : '';
+    if (m.art !== artVer) {
+      artVer = m.art;
+      if (m.art) {
+        const img = new Image();
+        const src = `/api/art?v=${m.art}&pin=${encodeURIComponent(pin)}`;
+        img.onload = () => { $('art').style.backgroundImage = `url("${src}")`; $('art').textContent = ''; };
+        img.src = src;
+      } else {
+        $('art').style.backgroundImage = ''; $('art').textContent = '♪';
+      }
+    }
+  }
+  setInterval(renderMedia, 500);
+
+  let polling = false;
+  async function poll() {
+    if (polling) return;
+    polling = true;
+    try {
+      const r = await api('/api/state');
+      const s = await r.json();
+      media = s.media; mediaAt = Date.now();
+      $('status').classList.remove('off');
+      renderMedia();
+    } catch (e) {
+      if (e.message !== 'pin') $('status').classList.add('off');
+    } finally { polling = false; }
+  }
+
+  document.querySelectorAll('[data-media]').forEach(b => {
+    b.onclick = () => {
+      const cmd = b.dataset.media;
+      if (cmd === 'play_pause' && media) { media.playing = !media.playing; renderMedia(); }
+      api(`/api/media/${cmd}`, { method: 'POST' }).then(() => setTimeout(poll, 400)).catch(() => {});
+    };
+  });
+
+  // ---------- start ----------
+  let started = false;
+  async function start() {
+    try { await loadButtons(); } catch (e) { if (e.message === 'pin') return; $('status').classList.add('off'); setTimeout(start, 3000); return; }
+    if (!started) { started = true; setInterval(poll, 1000); }
+    poll();
+  }
+  if (!pin) askPin(); else start();
+})();
+</script>
+</body>
+</html>
