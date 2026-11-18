@@ -30,15 +30,22 @@ WEB = ROOT / "web"
 CONFIG_PATH = ROOT / "config.json"
 
 DEFAULT_BUTTONS = [
-    {"id": "vol_down", "label": "Vol -", "icon": "🔉", "color": "#3b82f6", "action": {"type": "media", "key": "volume_down"}},
-    {"id": "mute", "label": "Mute", "icon": "🔇", "color": "#64748b", "action": {"type": "media", "key": "mute"}},
-    {"id": "vol_up", "label": "Vol +", "icon": "🔊", "color": "#3b82f6", "action": {"type": "media", "key": "volume_up"}},
-    {"id": "discord_mute", "label": "Discord Mic", "icon": "🎙️", "color": "#5865f2", "action": {"type": "keys", "keys": "ctrl+shift+m"}},
-    {"id": "screenshot", "label": "Screenshot", "icon": "✂️", "color": "#f59e0b", "action": {"type": "keys", "keys": "win+shift+s"}},
-    {"id": "taskmgr", "label": "Task Mgr", "icon": "📈", "color": "#10b981", "action": {"type": "keys", "keys": "ctrl+shift+esc"}},
-    {"id": "spotify", "label": "Spotify", "icon": "🎵", "color": "#1db954", "action": {"type": "open", "target": "spotify:"}},
-    {"id": "explorer", "label": "Files", "icon": "📁", "color": "#eab308", "action": {"type": "open", "target": "explorer"}},
-    {"id": "lock", "label": "Lock PC", "icon": "🔒", "color": "#ef4444", "action": {"type": "command", "command": "rundll32.exe user32.dll,LockWorkStation"}},
+    # App grid. "logo" = where to pull the real app icon from (see icons.py).
+    {"id": "spotify", "label": "Spotify", "logo": "appx:SpotifyAB.SpotifyMusic",
+     "action": {"type": "open", "target": "spotify:"}},
+    {"id": "chrome", "label": "Chrome", "logo": "exe:chrome.exe",
+     "action": {"type": "open", "target": "chrome"}},
+    {"id": "claude", "label": "Claude", "logo": "appx:Claude",
+     "action": {"type": "open", "target": "shell:AppsFolder\\Claude_pzs8sxrjxfjjc!Claude"}},
+    {"id": "steam", "label": "Steam", "logo": "exe:steam",
+     "action": {"type": "open", "target": "steam://open/main"}},
+    {"id": "files", "label": "Files", "logo": "exe:explorer.exe",
+     "action": {"type": "open", "target": "explorer"}},
+    # Side bar. "glyph" = built-in symbol: vol_up, vol_down, mute, play_pause, next, prev, moon
+    {"id": "vol_up", "label": "Volume Up", "place": "sidebar", "glyph": "vol_up",
+     "action": {"type": "media", "key": "volume_up"}},
+    {"id": "vol_down", "label": "Volume Down", "place": "sidebar", "glyph": "vol_down",
+     "action": {"type": "media", "key": "volume_down"}},
 ]
 
 
@@ -57,6 +64,23 @@ def load_config():
 
 
 CONFIG = load_config()
+
+# ---------------------------------------------------------------- logos
+
+from icons import load_logo  # noqa: E402
+
+LOGOS = {}
+
+
+def load_logos():
+    for b in CONFIG["buttons"]:
+        if b.get("logo"):
+            r = load_logo(b["logo"])
+            if r:
+                LOGOS[b["id"]] = r
+            else:
+                print(f"[logo] no logo found for '{b['id']}' ({b['logo']}); showing its label instead")
+
 
 
 # ---------------------------------------------------------------- keyboard
@@ -316,7 +340,15 @@ class Handler(BaseHTTPRequestHandler):
             if url.path == "/api/state":
                 return self._send(200, {"media": MEDIA.state})
             if url.path == "/api/buttons":
-                return self._send(200, [{k: b.get(k) for k in ("id", "label", "icon", "color")} for b in CONFIG["buttons"]])
+                return self._send(200, [
+                    {**{k: b.get(k) for k in ("id", "label", "icon", "color", "glyph")},
+                     "place": b.get("place", "grid"), "logo": b["id"] in LOGOS}
+                    for b in CONFIG["buttons"]])
+            if url.path.startswith("/api/logo/"):
+                logo = LOGOS.get(url.path.rsplit("/", 1)[-1])
+                if logo:
+                    return self._send(200, logo[1], logo[0], {"Cache-Control": "max-age=86400"})
+                return self._send(404, {"error": "no logo"})
             if url.path == "/api/art":
                 if MEDIA.art:
                     ctype, data = MEDIA.art
@@ -371,6 +403,8 @@ def lan_ip():
 
 def main():
     port = int(CONFIG.get("port", 8765))
+    print("  Loading app logos...")
+    load_logos()
     httpd = ThreadingHTTPServer(("0.0.0.0", port), Handler)
     ip = lan_ip()
     print()
