@@ -189,6 +189,7 @@
     animation: orb 6s linear infinite, pulse 2.4s ease-in-out infinite;
   }
   #voice.busy .v-orb { animation: orb 1.2s linear infinite, pulse .8s ease-in-out infinite; }
+  #voice.listening .v-orb { animation: orb 2s linear infinite, pulse 1s ease-in-out infinite; box-shadow: 0 0 56px rgba(255, 45, 85, .6), 0 0 110px rgba(10, 132, 255, .45); }
   @keyframes orb { to { transform: rotate(360deg); } }
   @keyframes pulse { 50% { scale: 1.08; } }
   .v-hint { color: var(--label-2); font-size: 14px; text-align: center; }
@@ -431,27 +432,70 @@
     clearTimeout(toastT); toastT = setTimeout(() => $('toast').classList.remove('show'), 3500);
   }
   const Rec = window.SpeechRecognition || window.webkitSpeechRecognition;
-  let rec = null;
+  const KB_HINT = 'Tap 🎤 on the keyboard and speak, or type';
+  let rec = null, autoT = null, autoTick = null, typedByHand = false;
+
+  // Auto-send: once speech stops for a moment, count down and send. Typing by hand cancels it.
+  function cancelAuto(hint) {
+    clearTimeout(autoT); clearInterval(autoTick); autoT = autoTick = null;
+    if (hint) $('vHint').textContent = hint;
+  }
+  function scheduleAuto(ms = 2000) {
+    cancelAuto();
+    if (typedByHand || !$('vText').value.trim()) return;
+    let left = Math.ceil(ms / 1000);
+    $('vHint').textContent = `Sending in ${left}… (tap the text to edit)`;
+    autoTick = setInterval(() => { left--; if (left > 0) $('vHint').textContent = `Sending in ${left}… (tap the text to edit)`; }, 1000);
+    autoT = setTimeout(() => { cancelAuto(); $('vForm').requestSubmit ? $('vForm').requestSubmit() : $('vSend').click(); }, ms);
+  }
+
+  // Keyboard dictation (iPhone 🎤 key) inserts words in chunks; typing inserts one letter at a time.
+  $('vText').addEventListener('input', e => {
+    const chunk = (e.data || '').length;
+    const dictated = chunk > 2 || e.inputType === 'insertReplacementText' || e.inputType === 'insertFromDictation';
+    if (dictated && !typedByHand) scheduleAuto(2200);
+    else if (e.inputType && e.inputType.startsWith('insert') && chunk <= 2) { typedByHand = true; cancelAuto(KB_HINT); }
+  });
+  $('vText').addEventListener('pointerdown', () => { if (autoT) { typedByHand = true; cancelAuto('Edit, then tap ↑ to send'); } });
+
+  function startListening() {
+    if (!Rec) return;
+    try {
+      rec = new Rec();
+      rec.lang = navigator.language || 'en-US';
+      rec.interimResults = true;
+      rec.continuous = false;
+      rec.onstart = () => { $('vHint').textContent = 'Listening… speak now'; $('voice').classList.add('listening'); };
+      rec.onresult = e => {
+        cancelAuto();
+        $('vText').value = [...e.results].map(r => r[0].transcript).join('');
+        $('vHint').textContent = 'Listening…';
+      };
+      rec.onerror = () => { $('voice').classList.remove('listening'); $('vHint').textContent = KB_HINT; };
+      rec.onend = () => { rec = null; $('voice').classList.remove('listening'); if ($('vText').value.trim()) scheduleAuto(1500); };
+      rec.start();
+    } catch { rec = null; }
+  }
+
   function openVoice() {
+    cancelAuto(); typedByHand = false;
     $('voice').classList.add('show'); $('voice').classList.remove('busy');
     $('vText').value = '';
-    $('vHint').textContent = 'Tap 🎤 on the keyboard and speak, or type';
-    $('vText').focus();               // opens the iPhone keyboard (its 🎤 key dictates)
-    if (Rec && window.isSecureContext) {  // live speech-to-text where the browser allows it
-      try {
-        rec = new Rec(); rec.lang = navigator.language || 'en-US'; rec.interimResults = true;
-        rec.onresult = e => { $('vText').value = [...e.results].map(r => r[0].transcript).join(''); };
-        rec.onend = () => { rec = null; };
-        rec.onerror = () => { $('vHint').textContent = 'Tap 🎤 on the keyboard and speak, or type'; };
-        rec.start(); $('vHint').textContent = 'Listening…';
-      } catch { rec = null; }
-    }
+    $('vHint').textContent = KB_HINT;
+    $('vText').focus();   // opens the iPhone keyboard right away (its 🎤 key dictates)
+    startListening();     // and also try live speech-to-text, where Safari allows it
   }
-  function closeVoice() { if (rec) try { rec.stop(); } catch {} $('voice').classList.remove('show'); $('vText').blur(); }
+  function closeVoice() {
+    cancelAuto();
+    if (rec) try { rec.abort(); } catch {}
+    $('voice').classList.remove('show', 'listening'); $('vText').blur();
+  }
   $('micBtn').onclick = openVoice;
   $('vCancel').onclick = closeVoice;
   $('vForm').onsubmit = async e => {
     e.preventDefault();
+    cancelAuto();
+    if (rec) try { rec.stop(); } catch {}
     const text = $('vText').value.trim();
     if (!text) return;
     $('voice').classList.add('busy'); $('vSend').disabled = true;

@@ -21,6 +21,7 @@ import threading
 import time
 import webbrowser
 from datetime import datetime, timezone
+from ctypes import wintypes
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, quote, urlencode, urlparse
@@ -391,6 +392,69 @@ def foreground_exe():
         kernel32.CloseHandle(h)
 
 
+WNDENUMPROC = ctypes.WINFUNCTYPE(wintypes.BOOL, ctypes.c_void_p, ctypes.c_void_p)
+user32.EnumWindows.argtypes = [WNDENUMPROC, ctypes.c_void_p]
+user32.IsWindowVisible.argtypes = [ctypes.c_void_p]
+user32.IsIconic.argtypes = [ctypes.c_void_p]
+user32.GetWindow.argtypes = [ctypes.c_void_p, ctypes.c_uint]
+user32.GetWindow.restype = ctypes.c_void_p
+user32.GetWindowTextLengthW.argtypes = [ctypes.c_void_p]
+user32.ShowWindow.argtypes = [ctypes.c_void_p, ctypes.c_int]
+user32.SetForegroundWindow.argtypes = [ctypes.c_void_p]
+user32.BringWindowToTop.argtypes = [ctypes.c_void_p]
+user32.AttachThreadInput.argtypes = [wintypes.DWORD, wintypes.DWORD, wintypes.BOOL]
+kernel32.GetCurrentThreadId.restype = wintypes.DWORD
+
+
+def exe_of_window(hwnd):
+    pid = ctypes.c_ulong()
+    user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+    h = kernel32.OpenProcess(0x1000, False, pid.value)
+    if not h:
+        return ""
+    try:
+        buf = ctypes.create_unicode_buffer(1024)
+        size = ctypes.c_ulong(1024)
+        return os.path.basename(buf.value).lower() if kernel32.QueryFullProcessImageNameW(h, 0, buf, ctypes.byref(size)) else ""
+    finally:
+        kernel32.CloseHandle(h)
+
+
+def find_window(exe):
+    found = []
+
+    def cb(hwnd, _):
+        if (user32.IsWindowVisible(hwnd) and not user32.GetWindow(hwnd, 4)  # GW_OWNER
+                and user32.GetWindowTextLengthW(hwnd) > 0 and exe_of_window(hwnd) == exe):
+            found.append(hwnd)
+            return False
+        return True
+
+    user32.EnumWindows(WNDENUMPROC(cb), None)
+    return found[0] if found else None
+
+
+def bring_to_front(hwnd):
+    """Windows blocks background programs from taking focus; these are the standard workarounds."""
+    if user32.IsIconic(hwnd):
+        user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+    fg = user32.GetForegroundWindow()
+    fg_thread = user32.GetWindowThreadProcessId(fg, None) if fg else 0
+    me = kernel32.GetCurrentThreadId()
+    attached = bool(fg_thread) and fg_thread != me and user32.AttachThreadInput(me, fg_thread, True)
+    try:
+        user32.BringWindowToTop(hwnd)
+        ok = user32.SetForegroundWindow(hwnd)
+    finally:
+        if attached:
+            user32.AttachThreadInput(me, fg_thread, False)
+    if not ok or foreground_exe() != exe_of_window(hwnd):
+        # Last resort: a lone Alt tap counts as user input and unlocks SetForegroundWindow.
+        _key(0x12)
+        _key(0x12, up=True)
+        user32.SetForegroundWindow(hwnd)
+
+
 class ClaudeVoice:
     """Opens the Claude desktop app with a new Claude Code session that has the command filled in.
 
@@ -418,11 +482,22 @@ class ClaudeVoice:
             self.last["sent"] = False
 
     def _send(self):
-        # Wait for Claude to come to the front and settle, then press Enter once.
+        # Bring Claude to the front (it may be minimised or behind other windows),
+        # wait for it to settle on the new session, then press Enter once.
         seen = None
-        deadline = time.time() + 10
+        last_pull = 0
+        deadline = time.time() + 15
         time.sleep(1.0)
         while time.time() < deadline:
+            if foreground_exe() != "claude.exe" and time.time() - last_pull > 1.0:
+                last_pull = time.time()
+                hwnd = find_window("claude.exe")
+                if hwnd:
+                    try:
+                        bring_to_front(hwnd)
+                    except Exception as e:
+                        print(f"[claude] couldn't bring Claude to the front: {e}")
+                time.sleep(0.2)
             if foreground_exe() == "claude.exe":
                 seen = seen or time.time()
                 if time.time() - seen >= 1.2:
