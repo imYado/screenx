@@ -226,8 +226,13 @@ class Media:
             self.art_version += 1
 
         app = s.source_app_user_model_id or ""
+        # Spotify Free reports ads as tracks by the artist "Spotify" (or with no artist at all).
+        artist = (props.artist or props.album_artist or "").strip()
+        is_ad = (friendly_app(app) == "Spotify" and playing
+                 and (artist.lower() in ("", "spotify") or (props.title or "").strip().lower() in ("advertisement", "spotify")))
         self.state = {
             "available": True,
+            "ad": is_ad,
             "title": props.title or "",
             "artist": props.artist or props.album_artist or "",
             "album": props.album_title or "",
@@ -283,6 +288,66 @@ class Media:
 
 
 MEDIA = Media()
+
+
+class AdDucker:
+    """Turns Spotify itself down while it plays an ad, and back up afterwards.
+
+    Only Spotify's own slider in the Windows volume mixer changes; other apps and the
+    PC's main volume are left alone.
+    """
+
+    def __init__(self, cfg):
+        self.enabled = cfg.get("duck", True)
+        self.level = float(cfg.get("volume", 0.1))
+        self.saved = None          # Spotify's volume before the ad
+        self.ducked = False
+        if self.enabled:
+            threading.Thread(target=self._run, daemon=True).start()
+
+    def _sessions(self):
+        from pycaw.pycaw import AudioUtilities
+        return [s.SimpleAudioVolume for s in AudioUtilities.GetAllSessions()
+                if s.Process and s.Process.name().lower() == "spotify.exe"]
+
+    def _run(self):
+        try:
+            import comtypes
+            comtypes.CoInitialize()
+            self._sessions()
+        except Exception as e:
+            print(f"[ads] per-app volume isn't available ({e}); Spotify ads won't be turned down")
+            return
+        import atexit
+        atexit.register(self._restore)
+        while True:
+            try:
+                ad = bool(MEDIA.state.get("ad"))
+                if ad and not self.ducked:
+                    vols = self._sessions()
+                    if vols:
+                        self.saved = [v.GetMasterVolume() for v in vols]
+                        for v in vols:
+                            v.SetMasterVolume(min(self.level, v.GetMasterVolume()), None)
+                        self.ducked = True
+                        print("[ads] Spotify ad: volume lowered")
+                elif not ad and self.ducked:
+                    self._restore()
+                    print("[ads] ad over: Spotify volume restored")
+            except Exception as e:
+                print(f"[ads] {e}")
+            time.sleep(0.5)
+
+    def _restore(self):
+        if not self.ducked:
+            return
+        vols = self._sessions()
+        for i, v in enumerate(vols):
+            v.SetMasterVolume((self.saved or [1.0])[min(i, len(self.saved or [1]) - 1)], None)
+        self.ducked = False
+
+
+ADS = AdDucker(CONFIG.get("spotify_ads", {}))
 
 
 # ---------------------------------------------------------------- AudioCast (PC -> phone audio streaming)
@@ -693,6 +758,91 @@ class PhoneMic:
 
 
 MIC = PhoneMic(CONFIG.get("mic", {}))
+
+
+# ---------------------------------------------------------------- "More" sheet: all apps + PC controls
+
+from pcapps import PCApps  # noqa: E402
+
+PCAPPS = PCApps()
+powrprof = ctypes.WinDLL("powrprof")
+user32.PostMessageW.argtypes = [ctypes.c_void_p, ctypes.c_uint, ctypes.c_void_p, ctypes.c_void_p]
+
+
+def shell_folder(name, sub=None):
+    """A user folder (Videos, Pictures...) even when it was moved, e.g. into OneDrive."""
+    import winreg
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER,
+                            r"Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders") as k:
+            base = Path(os.path.expandvars(winreg.QueryValueEx(k, name)[0]))
+    except OSError:
+        base = Path.home()
+    return base / sub if sub and (base / sub).exists() else base
+
+
+class System:
+    """PC controls for the phone's More sheet. Shut down / restart wait 30 s so they can be cancelled."""
+
+    DELAY = 30
+
+    def __init__(self):
+        self.pending = None   # {"what": "shutdown"|"restart", "at": epoch seconds}
+
+    def _later(self, fn, delay=1.0):
+        # Let the HTTP reply reach the phone before the PC goes to sleep / locks.
+        threading.Timer(delay, fn).start()
+
+    def _shutdown(self, flag, what):
+        subprocess.run(["shutdown", flag, "/t", str(self.DELAY)], creationflags=subprocess.CREATE_NO_WINDOW)
+        self.pending = {"what": what, "at": time.time() + self.DELAY}
+
+    def cancel(self):
+        subprocess.run(["shutdown", "/a"], creationflags=subprocess.CREATE_NO_WINDOW)
+        self.pending = None
+
+    def spacedesk(self):
+        app = next((a for a in PCAPPS.list() if "spacedesk" in a["name"].lower()), None)
+        if not app:
+            raise LookupError("spacedesk isn't installed on the PC")
+        PCAPPS.launch(app["id"])
+
+    def state(self):
+        if self.pending and time.time() > self.pending["at"] + 5:
+            self.pending = None
+        return {"pending": self.pending}
+
+    def do(self, name):
+        acts = {
+            "sleep": lambda: self._later(lambda: powrprof.SetSuspendState(0, 0, 0)),
+            "lock": lambda: self._later(user32.LockWorkStation),
+            "signout": lambda: self._later(lambda: subprocess.run(["shutdown", "/l"])),
+            "shutdown": lambda: self._shutdown("/s", "shutdown"),
+            "restart": lambda: self._shutdown("/r", "restart"),
+            "cancel": self.cancel,
+            "displays_off": lambda: self._later(
+                lambda: user32.PostMessageW(ctypes.c_void_p(0xFFFF), 0x0112, ctypes.c_void_p(0xF170), ctypes.c_void_p(2))),
+            "screenshot": lambda: press_combo("win+printscreen"),
+            "snip": lambda: press_combo("win+shift+s"),
+            "record": lambda: press_combo("win+alt+r"),
+            "clip": lambda: press_combo("win+alt+g"),
+            "record_area": lambda: press_combo("win+shift+r"),
+            "captures": lambda: os.startfile(shell_folder("My Video", "Captures")),
+            "screenshots": lambda: os.startfile(shell_folder("My Pictures", "Screenshots")),
+            "show_desktop": lambda: press_combo("win+d"),
+            "task_view": lambda: press_combo("win+tab"),
+            "switch_app": lambda: press_combo("alt+tab"),
+            "task_manager": lambda: press_combo("ctrl+shift+esc"),
+            "mute": lambda: press_combo("volume_mute"),
+            "settings": lambda: os.startfile("ms-settings:"),
+            "spacedesk": self.spacedesk,
+        }
+        if name not in acts:
+            raise ValueError(f"unknown control: {name}")
+        acts[name]()
+
+
+SYSTEM = System()
 TLS = {"port": None, "ca": None}
 
 
@@ -731,7 +881,7 @@ class Handler(BaseHTTPRequestHandler):
     server_version = "DeskDeck/1.0"
 
     def log_message(self, fmt, *args):
-        if "/api/state" in self.path or "/api/art" in self.path:
+        if self.path.startswith(("/api/state", "/api/art", "/api/appicon", "/api/logo")):
             return
         sys.stderr.write("[http] %s\n" % (fmt % args))
 
@@ -767,8 +917,16 @@ class Handler(BaseHTTPRequestHandler):
             if url.path == "/api/mic":
                 return self._websocket()
             if url.path == "/api/state":
-                return self._send(200, {"media": MEDIA.state, "audiocast": AUDIOCAST.state, "claude": CLAUDE.last,
-                                        "mic": {**MIC.state, "https_port": TLS["port"]}})
+                return self._send(200, {"media": {**MEDIA.state, "ducked": ADS.ducked}, "audiocast": AUDIOCAST.state, "claude": CLAUDE.last,
+                                        "mic": {**MIC.state, "https_port": TLS["port"]},
+                                        "system": SYSTEM.state()})
+            if url.path == "/api/apps":
+                return self._send(200, PCAPPS.list())
+            if url.path == "/api/appicon":
+                png = PCAPPS.icon(q.get("id", [""])[0])
+                if png:
+                    return self._send(200, png, "image/png", {"Cache-Control": "max-age=604800"})
+                return self._send(404, {"error": "no icon"})
             if url.path == "/api/buttons":
                 return self._send(200, [
                     {**{k: b.get(k) for k in ("id", "label", "icon", "color", "glyph", "status")},
@@ -799,6 +957,16 @@ class Handler(BaseHTTPRequestHandler):
                 body = json.loads(self.rfile.read(length) or b"{}")
                 CLAUDE.run(str(body.get("text", "")))
                 return self._send(200, {"ok": True, "auto_send": CLAUDE.auto_send})
+            if url.path == "/api/apps/launch":
+                length = min(int(self.headers.get("Content-Length") or 0), 4000)
+                PCAPPS.launch(str(json.loads(self.rfile.read(length) or b"{}").get("id", "")))
+                return self._send(200, {"ok": True})
+            if len(parts) == 3 and parts[:2] == ["api", "system"]:
+                try:
+                    SYSTEM.do(parts[2])
+                except LookupError as e:
+                    return self._send(404, {"error": str(e)})
+                return self._send(200, {"ok": True, "system": SYSTEM.state()})
             if len(parts) == 3 and parts[:2] == ["api", "media"] and parts[2] in ("play_pause", "next", "prev"):
                 MEDIA.command(parts[2])
                 return self._send(200, {"ok": True})
@@ -901,6 +1069,7 @@ def main():
         sys.exit(1)
     print("  Loading app logos...")
     load_logos()
+    threading.Thread(target=PCAPPS.list, daemon=True).start()   # warm up the All Apps list
     ip = lan_ip()
     sport = int(os.environ.get("DESKDECK_HTTPS_PORT") or CONFIG.get("https_port", port + 1))
     secure = start_https(sport, ip)

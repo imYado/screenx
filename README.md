@@ -8,7 +8,9 @@ Turn an old iPhone X into a CarPlay‑style desk companion for your Windows PC:
 - 📡 **AudioCast toggle**: tap to start/stop streaming PC audio to your phone, with live status (Streaming / Not connected / Off)
 - 🎙️ **Ask Claude**: the rainbow mic in the side bar. Speak (tap 🎤 on the iPhone keyboard) or type a command, and Claude on your PC opens a new Claude Code session with it and sends it
 - 🎤 **Phone as PC microphone**: tap the mic button in the side bar and your iPhone becomes a mic for Discord, Zoom, OBS, games…
-- 🔊 **Side bar** with volume up/down, a PC-connection indicator and a dim button
+- 🔇 **Spotify ads turned down automatically**: when Spotify plays an ad, only Spotify's volume drops to 10%, then goes back up when the music returns
+- ▦ **More** (bottom of the side bar): **Apps** shows every app on your PC with its real icon and a search box; **Controls** has sleep, lock, screens off, shut down / restart / sign out (with a 30 s cancel), screenshot, snip, screen recording, show desktop, Task Manager, second screen and more
+- 🔊 **Side bar** with volume up/down and a PC-connection indicator
 
 It's a PWA that runs full‑screen on the phone, plus a small Python helper on the PC. The phone talks to the PC over your Wi‑Fi.
 
@@ -55,6 +57,26 @@ Things to know:
 - To use a different virtual device, set `"mic": { "device": "part of its name" }` in `config.json`. The secure port is `"https_port"` (default: `port` + 1).
 
 The certificate is made on your PC (in the `certs` folder, git-ignored) and can only vouch for local network addresses, never real websites. Keep that folder private anyway, and delete it to make a new one (you'd then reinstall it on the phone).
+
+### More: all apps and PC controls
+Tap the ▦ button at the bottom of the side bar.
+
+- **Apps** lists what the Start menu's *All apps* shows (desktop programs, Store apps, Steam games), minus uninstallers, readmes, web links and Windows admin tools. Type to search; Enter opens the first match. The list refreshes every 5 minutes. Only apps on that list can be launched from the phone.
+- **Controls**
+  - *Power*: Sleep, Lock, Screens off, Shut down, Restart, Sign out. Risky ones need a second tap. Shut down and Restart wait 30 s and show a **Cancel** bar on the phone.
+  - *Screenshot & record*: Screenshot (saved to Pictures › Screenshots), Snip an area, **Record / stop** (Xbox Game Bar records the app in front, saved to Videos › Captures), Record an area (Snipping Tool), Save last 30 s (needs Game Bar's background recording on), and shortcuts to both folders.
+  - *Windows*: Show desktop, Task view, Switch app, Task Manager, Mute, Settings.
+  - *Second screen*: starts **spacedesk** on the PC. Install the free spacedesk Windows driver (spacedesk.net) and the spacedesk iPhone app first; then tap it and connect from the app.
+  - *This phone*: Dim Desk Deck (moved here from the side bar), Mic setup, Reload.
+
+### Spotify ads
+While Spotify plays an ad, Desk Deck turns **Spotify's own volume** down (the Windows volume mixer slider; nothing else changes) and restores it when the ad ends. The now-playing card shows "Ad · volume lowered". Ads are recognised by Spotify reporting the artist as "Spotify" (or none). Settings in `config.json`:
+
+```json
+"spotify_ads": { "duck": true, "volume": 0.1 }
+```
+
+`volume` is 0–1 (0 = silent). Set `duck` to `false` to turn it off.
 
 ### iPhone tips
 - Settings → Display & Brightness → **Auto‑Lock: Never**
