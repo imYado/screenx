@@ -686,6 +686,22 @@ class PhoneMic:
         # polls /api/state; a stop also cuts the live stream right away.
         self.cmd = {"id": 0, "on": None, "at": 0}
         self.stopped_by_pc = None
+        # iOS pauses other apps' sound while a web page records, so AudioCast would keep
+        # dropping. Pause it cleanly while the mic is live (PC sound goes back to the speakers).
+        self.pause_audiocast = cfg.get("pause_audiocast", True)
+        self.audiocast_paused = False
+
+    def _audiocast(self, live):
+        if not self.pause_audiocast:
+            return
+        if live and AUDIOCAST.state["running"] and not self.audiocast_paused:
+            self.audiocast_paused = True
+            print("[mic] pausing AudioCast while the phone mic is on")
+            threading.Thread(target=AUDIOCAST.do, args=("stop",), daemon=True).start()
+        elif not live and self.audiocast_paused:
+            self.audiocast_paused = False
+            print("[mic] phone mic off: turning AudioCast back on")
+            threading.Thread(target=AUDIOCAST.do, args=("start",), daemon=True).start()
 
     def request(self, on):
         self.cmd = {"id": self.cmd["id"] + 1, "on": bool(on), "at": time.time()}
@@ -784,6 +800,7 @@ class PhoneMic:
         self.state.update(connected=True, device=name, error=None)
         print(f"[mic] phone {peer} is streaming its microphone into '{dev['name']}' ({rate} Hz)")
         ws.send_json({"ok": True, "device": name})
+        self._audiocast(True)
         try:
             while self.current is token:
                 msg = ws.recv()
@@ -803,6 +820,7 @@ class PhoneMic:
                 self.current = None if self.current is token else self.current
                 self.state.update(connected=False)
                 print("[mic] phone microphone stopped")
+                self._audiocast(False)
 
 
 MIC = PhoneMic(CONFIG.get("mic", {}))

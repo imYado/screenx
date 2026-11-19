@@ -716,7 +716,11 @@
     if (pm.ctx.state !== 'running') pm.ctx.resume().catch(() => {});
     return pm.ctx;
   }
-  if (window.isSecureContext) document.addEventListener('pointerdown', () => { try { audioCtx(); } catch {} }, { once: true, capture: true });
+  // Pause it again straight away: a running audio context takes over the iPhone's audio and
+  // makes iOS pause other apps (AudioCast). The tap still counts, so it can resume later.
+  if (window.isSecureContext) document.addEventListener('pointerdown', () => {
+    try { const c = audioCtx(); c.resume().then(() => { if (!pm.on) c.suspend(); }).catch(() => {}); } catch {}
+  }, { once: true, capture: true });
 
   function pmStop(msg) {
     const was = pm.on;
@@ -726,7 +730,8 @@
     if (pm.node) { pm.node.onaudioprocess = null; try { pm.node.disconnect(); } catch {} }
     if (pm.src) try { pm.src.disconnect(); } catch {}
     if (pm.stream) pm.stream.getTracks().forEach(t => t.stop());
-    Object.assign(pm, { ws: null, stream: null, node: null, src: null, peak: 0 });   // keep pm.ctx unlocked
+    Object.assign(pm, { ws: null, stream: null, node: null, src: null, peak: 0 });
+    if (pm.ctx && pm.ctx.state === 'running') pm.ctx.suspend().catch(() => {});   // give the iPhone's audio back
     pmUI(null);
     if (msg && was) toast(msg);
   }
