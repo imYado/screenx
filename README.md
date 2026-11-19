@@ -5,6 +5,7 @@ Turn an old iPhone X into a CarPlay‑style desk companion for your Windows PC:
 - 🕐 **Clock + date widget** (tap to switch 12/24h)
 - 🎵 **Now playing** from Spotify, browsers, or any Windows media app, with album art, a blurred-art background, progress, and play/pause/next/previous
 - 📱 **App launcher** with the apps' **real logos**, pulled straight from your PC (Spotify, Chrome, Claude, Steam, Files by default)
+- 📡 **AudioCast toggle**: tap to start/stop streaming PC audio to your phone, with live status (Streaming / Not connected / Off)
 - 🔊 **Side bar** with volume up/down, a PC-connection indicator and a dim button
 
 It's a PWA that runs full‑screen on the phone, plus a small Python helper on the PC. The phone talks to the PC over your Wi‑Fi.
@@ -60,6 +61,9 @@ Logos that are already a filled square (like Claude's) automatically fill the wh
 | `keys` | `keys`: combo joined with `+` | `{"type":"keys","keys":"ctrl+shift+m"}` |
 | `url` | `url` | `{"type":"url","url":"https://youtube.com"}` |
 | `command` | `command`, optional `cwd` | `{"type":"command","command":"shutdown /s /t 60"}` |
+| `audiocast` | `do`: `toggle`, `start` or `stop` (add `"status": "audiocast"` to the button for the live status line) | `{"type":"audiocast","do":"toggle"}` |
+
+AudioCast has no remote-control API, so Desk Deck turns it on by launching it (it reconnects to the last phone by itself) and off by closing it (it disconnects and restores PC sound). "Streaming" means AudioCast has a live connection to another device on your network.
 
 Key names: `ctrl`, `shift`, `alt`, `win`, `esc`, `enter`, `tab`, `space`, `f1`–`f24`, arrows (`up`, `down`, `left`, `right`), letters and digits.
 

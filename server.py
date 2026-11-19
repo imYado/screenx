@@ -41,6 +41,9 @@ DEFAULT_BUTTONS = [
      "action": {"type": "open", "target": "steam://open/main"}},
     {"id": "files", "label": "Files", "logo": "exe:explorer.exe",
      "action": {"type": "open", "target": "explorer"}},
+    # Tap to start/stop streaming PC audio to your phone; shows live status under the icon.
+    {"id": "audiocast", "label": "AudioCast", "logo": "appx:sskplay.AudioCast", "status": "audiocast",
+     "action": {"type": "audiocast", "do": "toggle"}},
     # Side bar. "glyph" = built-in symbol: vol_up, vol_down, mute, play_pause, next, prev, moon
     {"id": "vol_up", "label": "Volume Up", "place": "sidebar", "glyph": "vol_up",
      "action": {"type": "media", "key": "volume_up"}},
@@ -276,11 +279,96 @@ class Media:
 MEDIA = Media()
 
 
+# ---------------------------------------------------------------- AudioCast (PC -> phone audio streaming)
+
+class AudioCast:
+    """Watches the AudioCast sender and turns it on/off.
+
+    AudioCast has no remote-control API, but it auto-reconnects to the last phone
+    when it starts and disconnects cleanly when it quits, so on/off = start/quit.
+    """
+
+    def __init__(self, cfg):
+        self.app = cfg.get("app", r"shell:AppsFolder\sskplay.AudioCast_m5e88qwsy0m20!App")
+        self.process = cfg.get("process", "audiocast.exe")
+        self.state = {"running": False, "connected": False, "peer": None, "busy": False}
+        self.lock = threading.Lock()
+        threading.Thread(target=self._watch, daemon=True).start()
+
+    def _run(self, *args):
+        return subprocess.run(args, capture_output=True, text=True, timeout=10,
+                              creationflags=subprocess.CREATE_NO_WINDOW).stdout
+
+    def _pids(self):
+        out = self._run("tasklist", "/FI", f"IMAGENAME eq {self.process}", "/FO", "CSV", "/NH")
+        pids = set()
+        for line in out.splitlines():
+            parts = [p.strip('"') for p in line.split('","')]
+            if len(parts) > 1 and parts[0].lower() == self.process.lower():
+                pids.add(parts[1])
+        return pids
+
+    def refresh(self):
+        pids = self._pids()
+        peer = None
+        if pids:
+            for line in self._run("netstat", "-ano", "-p", "TCP").splitlines():
+                cols = line.split()
+                if len(cols) == 5 and cols[3] == "ESTABLISHED" and cols[4] in pids:
+                    host = cols[2].rsplit(":", 1)[0].strip("[]")
+                    if host not in ("127.0.0.1", "::1"):
+                        peer = host
+                        break
+        self.state.update(running=bool(pids), connected=peer is not None, peer=peer)
+
+    def _watch(self):
+        while True:
+            try:
+                self.refresh()
+            except Exception as e:
+                print(f"[audiocast] status check failed: {e}")
+            time.sleep(2)
+
+    def start(self):
+        os.startfile(self.app)
+
+    def stop(self):
+        # Ask nicely first so AudioCast can disconnect and restore PC sound; force only if it ignores us.
+        self._run("taskkill", "/IM", self.process)
+        for _ in range(10):
+            time.sleep(0.4)
+            if not self._pids():
+                return
+        print("[audiocast] did not quit when asked; forcing it to close")
+        self._run("taskkill", "/F", "/IM", self.process)
+
+    def do(self, what):
+        with self.lock:
+            self.state["busy"] = True
+            try:
+                running = bool(self._pids())
+                if what == "toggle":
+                    what = "stop" if running else "start"
+                if what == "start" and not running:
+                    self.start()
+                elif what == "stop" and running:
+                    self.stop()
+                time.sleep(0.5)
+                self.refresh()
+            finally:
+                self.state["busy"] = False
+
+
+AUDIOCAST = AudioCast(CONFIG.get("audiocast", {}))
+
+
 # ---------------------------------------------------------------- button actions
 
 def run_action(action):
     t = action.get("type")
-    if t == "media":
+    if t == "audiocast":
+        AUDIOCAST.do(action.get("do", "toggle"))
+    elif t == "media":
         key = action["key"]
         if key in ("play_pause", "next", "prev"):
             MEDIA.command(key)
@@ -338,10 +426,10 @@ class Handler(BaseHTTPRequestHandler):
             if not self._authed(q):
                 return self._send(401, {"error": "bad pin"})
             if url.path == "/api/state":
-                return self._send(200, {"media": MEDIA.state})
+                return self._send(200, {"media": MEDIA.state, "audiocast": AUDIOCAST.state})
             if url.path == "/api/buttons":
                 return self._send(200, [
-                    {**{k: b.get(k) for k in ("id", "label", "icon", "color", "glyph")},
+                    {**{k: b.get(k) for k in ("id", "label", "icon", "color", "glyph", "status")},
                      "place": b.get("place", "grid"), "logo": b["id"] in LOGOS}
                     for b in CONFIG["buttons"]])
             if url.path.startswith("/api/logo/"):
@@ -401,11 +489,26 @@ def lan_ip():
         s.close()
 
 
+class Server(ThreadingHTTPServer):
+    # Windows would otherwise let a second copy bind the same port silently.
+    allow_reuse_address = False
+
+    def server_bind(self):
+        if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        super().server_bind()
+
+
 def main():
-    port = int(CONFIG.get("port", 8765))
+    port = int(os.environ.get("DESKDECK_PORT") or CONFIG.get("port", 8765))
+    try:
+        httpd = Server(("0.0.0.0", port), Handler)
+    except OSError:
+        print(f"\n  Desk Deck is already running (port {port} is in use).")
+        print("  Close the other Desk Deck window first, then start it again.\n")
+        sys.exit(1)
     print("  Loading app logos...")
     load_logos()
-    httpd = ThreadingHTTPServer(("0.0.0.0", port), Handler)
     ip = lan_ip()
     print()
     print("  Desk Deck is running")

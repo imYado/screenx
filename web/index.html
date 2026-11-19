@@ -144,6 +144,11 @@
   .tile .ltr { font-size: 30px; font-weight: 600; color: var(--label-2); }
   .app-name { font-size: 12.5px; font-weight: 500; color: rgba(255,255,255,.92); max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .app:active .tile { transform: scale(.88); filter: brightness(.7); }
+  .app-status { font-size: 11px; font-weight: 600; margin-top: -4px; color: var(--label-3); display: flex; align-items: center; gap: 4px; white-space: nowrap; }
+  .app-status::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+  .app-status.on { color: var(--green); }
+  .app-status.warn { color: #ffd60a; }
+  .app.live .tile { box-shadow: inset 0 0 0 .5px rgba(255,255,255,.12), 0 0 0 2.5px var(--green), 0 6px 16px rgba(0,0,0,.5); }
   .app.err .tile { box-shadow: inset 0 0 0 2px var(--red); }
   .dots { display: flex; justify-content: center; gap: 7px; height: 7px; margin-top: 2px; }
   .dots i { width: 7px; height: 7px; border-radius: 50%; background: var(--label-3); }
@@ -338,7 +343,23 @@
     } catch {}
   }
 
+  // AudioCast tile status
+  let acTiles = [], acState = null, acPending = null;
+  function renderAudioCast() {
+    acTiles.forEach(({ el, st }) => {
+      let text = 'Off', cls = '';
+      if (acPending) { text = acPending; cls = 'warn'; }
+      else if (acState && acState.busy) { text = 'Working…'; cls = 'warn'; }
+      else if (acState && acState.connected) { text = 'Streaming'; cls = 'on'; }
+      else if (acState && acState.running) { text = 'Not connected'; cls = 'warn'; }
+      st.textContent = text;
+      st.className = 'app-status' + (cls ? ' ' + cls : '');
+      el.classList.toggle('live', cls === 'on');
+    });
+  }
+
   async function loadButtons() {
+    acTiles = [];
     const list = await api('/api/buttons').then(r => r.json());
 
     const side = $('sideBtns');
@@ -378,7 +399,20 @@
         name.className = 'app-name';
         name.textContent = b.label || '';
         el.append(tile, name);
-        el.onclick = () => press(b.id, el, 'ok', 'err');
+        if (b.status === 'audiocast') {
+          const st = document.createElement('div');
+          st.className = 'app-status';
+          st.textContent = '…';
+          el.appendChild(st);
+          acTiles.push({ el, st });
+          el.onclick = () => {
+            acPending = acState && acState.running ? 'Stopping…' : 'Starting…';
+            renderAudioCast();
+            press(b.id, el, 'ok', 'err').finally(() => { acPending = null; poll(); });
+          };
+        } else {
+          el.onclick = () => press(b.id, el, 'ok', 'err');
+        }
         page.appendChild(el);
       });
       pages.appendChild(page);
@@ -447,6 +481,7 @@
     try {
       const s = await api('/api/state').then(r => r.json());
       media = s.media; mediaAt = Date.now();
+      acState = s.audiocast || null; renderAudioCast();
       $('conn').classList.remove('off');
       renderMedia();
     } catch (e) {
