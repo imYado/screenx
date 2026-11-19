@@ -23,7 +23,7 @@ import webbrowser
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, quote, urlencode, urlparse
 
 ROOT = Path(__file__).resolve().parent
 WEB = ROOT / "web"
@@ -362,6 +362,84 @@ class AudioCast:
 AUDIOCAST = AudioCast(CONFIG.get("audiocast", {}))
 
 
+# ---------------------------------------------------------------- Claude voice commands
+
+kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+user32.GetForegroundWindow.restype = ctypes.c_void_p
+user32.GetWindowThreadProcessId.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_ulong)]
+kernel32.OpenProcess.restype = ctypes.c_void_p
+kernel32.QueryFullProcessImageNameW.argtypes = [ctypes.c_void_p, ctypes.c_ulong, ctypes.c_wchar_p, ctypes.POINTER(ctypes.c_ulong)]
+kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
+
+
+def foreground_exe():
+    hwnd = user32.GetForegroundWindow()
+    if not hwnd:
+        return ""
+    pid = ctypes.c_ulong()
+    user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+    h = kernel32.OpenProcess(0x1000, False, pid.value)  # PROCESS_QUERY_LIMITED_INFORMATION
+    if not h:
+        return ""
+    try:
+        buf = ctypes.create_unicode_buffer(1024)
+        size = ctypes.c_ulong(1024)
+        if kernel32.QueryFullProcessImageNameW(h, 0, buf, ctypes.byref(size)):
+            return os.path.basename(buf.value).lower()
+        return ""
+    finally:
+        kernel32.CloseHandle(h)
+
+
+class ClaudeVoice:
+    """Opens the Claude desktop app with a new Claude Code session that has the command filled in.
+
+    Claude's claude://code/new link fills in the prompt but does not send it, so when
+    auto_send is on we press Enter -- only if the Claude window is the one in front.
+    """
+
+    def __init__(self, cfg):
+        self.folder = cfg.get("folder", str(ROOT))
+        self.auto_send = cfg.get("auto_send", True)
+        self.prefix = cfg.get("prefix", "[Voice command from Desk Deck on my phone] ")
+        self.last = {"text": None, "sent": None, "at": None}
+
+    def run(self, text):
+        text = " ".join(text.split())[:2000]
+        if not text:
+            raise ValueError("empty command")
+        url = "claude://code/new?" + urlencode({"q": self.prefix + text, "folder": self.folder},
+                                                quote_via=quote)
+        os.startfile(url)
+        self.last = {"text": text, "sent": None, "at": time.time()}
+        if self.auto_send:
+            threading.Thread(target=self._send, daemon=True).start()
+        else:
+            self.last["sent"] = False
+
+    def _send(self):
+        # Wait for Claude to come to the front and settle, then press Enter once.
+        seen = None
+        deadline = time.time() + 10
+        time.sleep(1.0)
+        while time.time() < deadline:
+            if foreground_exe() == "claude.exe":
+                seen = seen or time.time()
+                if time.time() - seen >= 1.2:
+                    press_combo("enter")
+                    self.last["sent"] = True
+                    print("[claude] command sent")
+                    return
+            else:
+                seen = None
+            time.sleep(0.2)
+        self.last["sent"] = False
+        print("[claude] Claude window didn't come to the front; command is filled in, press Enter in Claude to send it")
+
+
+CLAUDE = ClaudeVoice(CONFIG.get("claude", {}))
+
+
 # ---------------------------------------------------------------- button actions
 
 def run_action(action):
@@ -426,7 +504,7 @@ class Handler(BaseHTTPRequestHandler):
             if not self._authed(q):
                 return self._send(401, {"error": "bad pin"})
             if url.path == "/api/state":
-                return self._send(200, {"media": MEDIA.state, "audiocast": AUDIOCAST.state})
+                return self._send(200, {"media": MEDIA.state, "audiocast": AUDIOCAST.state, "claude": CLAUDE.last})
             if url.path == "/api/buttons":
                 return self._send(200, [
                     {**{k: b.get(k) for k in ("id", "label", "icon", "color", "glyph", "status")},
@@ -452,6 +530,11 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(401, {"error": "bad pin"})
         parts = url.path.strip("/").split("/")
         try:
+            if url.path == "/api/claude":
+                length = min(int(self.headers.get("Content-Length") or 0), 20000)
+                body = json.loads(self.rfile.read(length) or b"{}")
+                CLAUDE.run(str(body.get("text", "")))
+                return self._send(200, {"ok": True, "auto_send": CLAUDE.auto_send})
             if len(parts) == 3 and parts[:2] == ["api", "media"] and parts[2] in ("play_pause", "next", "prev"):
                 MEDIA.command(parts[2])
                 return self._send(200, {"ok": True})

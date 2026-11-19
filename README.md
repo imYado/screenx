@@ -19,6 +19,22 @@ It's a PWA that runs full‑screen on the phone, plus a small Python helper on t
 4. On the iPhone (same Wi‑Fi), open that address in **Safari** and enter the PIN.
 5. Tap **Share → Add to Home Screen**. Open it from the home screen; it runs full‑screen.
 
+### Start automatically with Windows
+```powershell
+powershell -ExecutionPolicy Bypass -File autostart.ps1          # turn on
+powershell -ExecutionPolicy Bypass -File autostart.ps1 -Remove  # turn off
+```
+This adds a "Desk Deck" shortcut (opens minimised) to your Startup folder. You can also switch it off in Settings → Apps → Startup.
+
+### Ask Claude (voice commands)
+Needs the Claude desktop app. Desk Deck opens `claude://code/new` with your command filled in, then presses Enter to send it, but only if the Claude window is in front (so a stray Enter never goes to another app). If Claude didn't come to the front, the command is waiting in Claude; just press Enter there. Settings in `config.json`:
+
+```json
+"claude": { "folder": "C:\\Users\\you\\Documents\\screenx", "auto_send": true }
+```
+
+`folder` is where the new session works. Claude still asks on the PC before risky actions, as usual. Anyone with your Desk Deck PIN on your Wi‑Fi can send commands, so keep the PIN private.
+
 ### iPhone tips
 - Settings → Display & Brightness → **Auto‑Lock: Never**
 - Settings → Accessibility → **Guided Access** to lock the phone into the app
