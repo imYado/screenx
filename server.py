@@ -682,6 +682,25 @@ class PhoneMic:
         self.state = {"connected": False, "device": None, "error": None}
         self.current = None
         self.lock = threading.Lock()
+        # Start/stop requests from the PC (tray icon / hotkey). The phone picks them up when it
+        # polls /api/state; a stop also cuts the live stream right away.
+        self.cmd = {"id": 0, "on": None, "at": 0}
+        self.stopped_by_pc = None
+
+    def request(self, on):
+        self.cmd = {"id": self.cmd["id"] + 1, "on": bool(on), "at": time.time()}
+        if not on and self.current is not None:
+            self.stopped_by_pc = self.current
+            self.current = None
+        print(f"[mic] {'start' if on else 'stop'} requested from the PC")
+
+    def toggle(self):
+        self.request(not self.state["connected"])
+
+    def waiting(self):
+        """True while a start request is out but the phone hasn't connected yet."""
+        c = self.cmd
+        return bool(c["on"]) and not self.state["connected"] and time.time() - c["at"] < 10
 
     def find_device(self, rescan=True):
         import sounddevice as sd
@@ -775,10 +794,13 @@ class PhoneMic:
                         buf += msg[1][: len(msg[1]) & ~1]
                         if len(buf) > ceiling:
                             del buf[: len(buf) - target]
+            if self.stopped_by_pc is token:
+                ws.send_json({"stopped": "pc"})
         finally:
             stream.stop()
             stream.close()
-            if self.current is token:
+            if self.current is token or self.stopped_by_pc is token:
+                self.current = None if self.current is token else self.current
                 self.state.update(connected=False)
                 print("[mic] phone microphone stopped")
 
@@ -944,7 +966,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self._websocket()
             if url.path == "/api/state":
                 return self._send(200, {"media": {**MEDIA.state, "ducked": ADS.ducked}, "audiocast": AUDIOCAST.state, "claude": CLAUDE.last,
-                                        "mic": {**MIC.state, "https_port": TLS["port"]},
+                                        "mic": {**MIC.state, "https_port": TLS["port"], "cmd": MIC.cmd},
                                         "system": SYSTEM.state()})
             if url.path == "/api/apps":
                 return self._send(200, PCAPPS.list())
@@ -1096,6 +1118,16 @@ def main():
     print("  Loading app logos...")
     load_logos()
     threading.Thread(target=PCAPPS.list, daemon=True).start()   # warm up the All Apps list
+
+    def quit_deskdeck():
+        ADS._restore()
+        print("  Desk Deck closed from the tray icon.")
+        os._exit(0)
+
+    from pctray import start_hotkey, start_tray
+    start_tray(MIC, quit_deskdeck)
+    hotkey = CONFIG.get("mic", {}).get("hotkey", "ctrl+alt+shift+m")
+    hotkey_ok = bool(hotkey) and start_hotkey(hotkey, MIC.toggle, vk_for)
     ip = lan_ip()
     sport = int(os.environ.get("DESKDECK_HTTPS_PORT") or CONFIG.get("https_port", port + 1))
     secure = start_https(sport, ip)
@@ -1107,6 +1139,9 @@ def main():
     if secure:
         print(f"  With the phone mic (after installing the certificate, see README):")
         print(f"      https://{ip}:{sport}")
+    if secure:
+        print("  Phone mic on/off from the PC: click the mic icon by the clock"
+              + (f" or press {hotkey.upper()}" if hotkey_ok else ""))
     print(f"  PIN: {CONFIG['pin']}")
     print("  Then: Share -> Add to Home Screen")
     print("  (Keep this window open. Ctrl+C to stop.)")

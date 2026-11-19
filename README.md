@@ -49,6 +49,10 @@ The crossed‑out mic in the side bar turns your iPhone into a microphone for th
    - **Open secure Desk Deck**, then Share → **Add to Home Screen**. Use this new icon from now on (you can delete the old one).
 3. **In your apps** (Discord, Zoom, OBS, Windows Sound settings…), choose **CABLE Output** as the microphone.
 
+**Turn it on/off from the PC:** click the **mic icon by the clock** in the taskbar (green = live, yellow = waiting for the phone), or press **Ctrl+Alt+Shift+M** anywhere. Desk Deck must be open on the phone's screen (the secure https icon), and you need to have tapped it once since opening it, because iOS only allows audio after a tap. Change the hotkey with `"mic": { "hotkey": "ctrl+shift+f9" }` in `config.json`. Right-click the tray icon to quit Desk Deck.
+
+**Keep your speakers as the default output.** Installing VB-Cable can make *CABLE Input* the Windows default playback device. Then all PC sound goes into the cable instead of your speakers, it mixes into the phone mic, and AudioCast keeps dropping. Fix it in Settings → System → Sound → Output by choosing your speakers or monitor again.
+
 Things to know:
 - The mic only runs while Desk Deck is open on the phone's screen; iOS stops it if you switch apps or lock the phone.
 - Delay is about 0.1–0.2 s over Wi‑Fi. iOS echo cancellation and noise suppression are on.

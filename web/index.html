@@ -708,6 +708,16 @@
   }
   $('msClose').onclick = () => $('micSetup').classList.remove('show');
 
+  // iOS only lets audio start inside a tap. Unlock one audio context on the first tap anywhere
+  // and keep it, so the PC can also turn the mic on later (tray icon / Ctrl+Alt+Shift+M).
+  const AC = window.AudioContext || window.webkitAudioContext;
+  function audioCtx() {
+    if (!pm.ctx || pm.ctx.state === 'closed') pm.ctx = new AC();
+    if (pm.ctx.state !== 'running') pm.ctx.resume().catch(() => {});
+    return pm.ctx;
+  }
+  if (window.isSecureContext) document.addEventListener('pointerdown', () => { try { audioCtx(); } catch {} }, { once: true, capture: true });
+
   function pmStop(msg) {
     const was = pm.on;
     pm.on = false;
@@ -716,19 +726,15 @@
     if (pm.node) { pm.node.onaudioprocess = null; try { pm.node.disconnect(); } catch {} }
     if (pm.src) try { pm.src.disconnect(); } catch {}
     if (pm.stream) pm.stream.getTracks().forEach(t => t.stop());
-    if (pm.ctx) try { pm.ctx.close(); } catch {}
-    Object.assign(pm, { ws: null, ctx: null, stream: null, node: null, src: null, peak: 0 });
+    Object.assign(pm, { ws: null, stream: null, node: null, src: null, peak: 0 });   // keep pm.ctx unlocked
     pmUI(null);
     if (msg && was) toast(msg);
   }
 
-  async function pmStart() {
-    if (!window.isSecureContext || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return openMicSetup();
+  async function pmStart(fromPC) {
+    if (!window.isSecureContext || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return fromPC ? null : openMicSetup();
     pm.on = true; pmUI('starting');
-    // Create the audio context inside the tap, or iOS keeps it silent.
-    const AC = window.AudioContext || window.webkitAudioContext;
-    pm.ctx = new AC();
-    pm.ctx.resume();
+    audioCtx();
     try {
       pm.stream = await navigator.mediaDevices.getUserMedia({
         audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
@@ -744,7 +750,8 @@
     ws.onopen = () => ws.send(JSON.stringify({ rate: pm.ctx.sampleRate }));
     ws.onmessage = e => {
       let m = {}; try { m = JSON.parse(e.data); } catch {}
-      if (m.error) { pmStop(); toast(m.error); }
+      if (m.stopped === 'pc') { pmStop(); toast('Mic turned off from the PC'); }
+      else if (m.error) { pmStop(); toast(m.error); }
       else if (m.ok) { ready = true; pmUI('live'); toast(`Mic on — PC apps hear it as "CABLE Output"`); }
     };
     ws.onclose = () => pmStop(ready ? 'Phone mic disconnected' : "Couldn't connect the mic to the PC");
@@ -775,6 +782,18 @@
     meter();
   }
   pmBtn.onclick = () => pm.on ? pmStop() : pmStart();
+
+  // Start/stop requests from the PC. Only fresh ones count, so reopening the app
+  // doesn't replay an old request.
+  let pmCmdSeen = null;
+  function pmRemote(cmd) {
+    if (!cmd || cmd.id === pmCmdSeen) return;
+    const first = pmCmdSeen === null;
+    pmCmdSeen = cmd.id;
+    if (first && Date.now() / 1000 - cmd.at > 10) return;
+    if (cmd.on && !pm.on && !document.hidden) { toast('Mic turned on from the PC'); pmStart(true); }
+    else if (cmd.on === false && pm.on) { pmStop(); toast('Mic turned off from the PC'); }
+  }
   // iOS pauses the page (and its mic) when you leave the app.
   document.addEventListener('visibilitychange', () => { if (document.hidden && pm.on) pmStop(); });
 
@@ -1067,6 +1086,7 @@
       acState = s.audiocast || null; renderAudioCast();
       httpsPort = (s.mic && s.mic.https_port) || null;
       if (s.system) showPending(s.system.pending);
+      pmRemote(s.mic && s.mic.cmd);
       $('conn').classList.remove('off');
       renderMedia();
     } catch (e) {
