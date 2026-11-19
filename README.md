@@ -6,6 +6,7 @@ Turn an old iPhone X into a CarPlay‑style desk companion for your Windows PC:
 - 🎵 **Now playing** from Spotify, browsers, or any Windows media app, with album art, a blurred-art background, progress, and play/pause/next/previous
 - 📱 **App launcher** with the apps' **real logos**, pulled straight from your PC (Spotify, Chrome, Claude, Steam, Files by default)
 - 📡 **AudioCast toggle**: tap to start/stop streaming PC audio to your phone, with live status (Streaming / Not connected / Off)
+- 🎙️ **Ask Claude**: the rainbow mic in the side bar. Speak (tap 🎤 on the iPhone keyboard) or type a command, and Claude on your PC opens a new Claude Code session with it and sends it
 - 🔊 **Side bar** with volume up/down, a PC-connection indicator and a dim button
 
 It's a PWA that runs full‑screen on the phone, plus a small Python helper on the PC. The phone talks to the PC over your Wi‑Fi.
