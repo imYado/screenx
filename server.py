@@ -666,8 +666,17 @@ class PhoneMic:
         self.current = None
         self.lock = threading.Lock()
 
-    def find_device(self):
+    def find_device(self, rescan=True):
         import sounddevice as sd
+        found = self._match(sd)
+        if not found and rescan:
+            # PortAudio only lists devices once; re-scan so a cable installed after start shows up.
+            sd._terminate()
+            sd._initialize()
+            found = self._match(sd)
+        return found
+
+    def _match(self, sd):
         want = self.device.lower()
         apis = sd.query_hostapis()
         outs = [(i, d) for i, d in enumerate(sd.query_devices())
