@@ -60,9 +60,9 @@
   .sb-time { font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; letter-spacing: -.01em; }
   .sb-conn { width: 18px; height: 18px; color: var(--green); transition: color .3s; }
   .sb-conn.off { color: var(--red); }
-  .sb-mid { flex: 1; display: flex; flex-direction: column; justify-content: center; gap: 12px; }
+  .sb-mid { flex: 1; display: flex; flex-direction: column; justify-content: center; gap: clamp(6px, 2.4vh, 12px); }
   .sb-btn {
-    width: 46px; height: 46px; border-radius: 50%;
+    width: clamp(38px, 11.5vh, 46px); height: clamp(38px, 11.5vh, 46px); border-radius: 50%; flex: none;
     background: var(--card-2); display: grid; place-items: center;
     transition: transform .12s ease, background .2s;
   }
@@ -204,6 +204,39 @@
   .v-send:disabled { opacity: .4; }
   .v-actions button { color: var(--blue); font-size: 17px; padding: 6px 16px; }
 
+  /* ---------- phone-as-PC-microphone ---------- */
+  .sb-btn.pcmic { color: var(--label-2); }
+  .sb-btn.pcmic.starting { background: #4a3d0a; color: #ffd60a; }
+  .sb-btn.pcmic.live {
+    background: var(--green); color: #000;
+    box-shadow: 0 0 0 calc(2px + var(--lvl, 0) * 9px) rgba(48, 209, 88, .32);
+    transition: transform .12s ease, background .2s, box-shadow .08s linear;
+  }
+
+  .sheet {
+    position: fixed; inset: 0; z-index: 8; display: none; align-items: center; justify-content: center;
+    padding: calc(var(--st) + 12px) calc(var(--sr) + 16px) calc(var(--sb) + 12px) calc(var(--sl) + 16px);
+    background: rgba(0, 0, 0, .7);
+    -webkit-backdrop-filter: blur(20px); backdrop-filter: blur(20px);
+  }
+  .sheet.show { display: flex; }
+  .sheet-card {
+    background: var(--card); border-radius: var(--r-card); width: min(620px, 100%); max-height: 100%;
+    overflow-y: auto; padding: 18px 20px; -webkit-user-select: text; user-select: text;
+  }
+  .sheet-card h2 { margin: 0 0 4px; font-size: 19px; }
+  .sheet-card p { margin: 0 0 10px; color: var(--label-2); font-size: 14px; }
+  .sheet-card ol { margin: 0 0 12px; padding-left: 22px; font-size: 14.5px; line-height: 1.45; }
+  .sheet-card li { margin-bottom: 6px; }
+  .sheet-card b { font-weight: 600; }
+  .sheet-card a { color: var(--blue); }
+  .sheet-btns { display: flex; gap: 10px; justify-content: flex-end; flex-wrap: wrap; }
+  .sheet-btns a, .sheet-btns button {
+    font-size: 15px; font-weight: 600; padding: 10px 16px; border-radius: 12px;
+    background: var(--card-2); color: var(--label); text-decoration: none;
+  }
+  .sheet-btns .primary { background: var(--blue); color: #fff; }
+
   #toast {
     position: fixed; left: 50%; bottom: calc(var(--sb) + 18px); z-index: 9;
     transform: translate(-50%, 20px); opacity: 0; pointer-events: none;
@@ -236,6 +269,7 @@
     <svg class="sb-conn" id="conn" viewBox="0 0 24 24" aria-label="PC connection"><path fill="currentColor" d="M12 18.5a1.75 1.75 0 1 1 0 3.5 1.75 1.75 0 0 1 0-3.5zM12 13c2 0 3.8.8 5.1 2.1l-1.6 1.6A5 5 0 0 0 12 15.3a5 5 0 0 0-3.5 1.4L6.9 15.1A7.2 7.2 0 0 1 12 13zm0-4.5c3.3 0 6.2 1.3 8.4 3.4l-1.6 1.6A9.6 9.6 0 0 0 12 10.8c-2.7 0-5.1 1.1-6.8 2.7L3.6 12A11.9 11.9 0 0 1 12 8.5zM12 4c4.5 0 8.6 1.8 11.6 4.7L22 10.3A14.1 14.1 0 0 0 12 6.3 14.1 14.1 0 0 0 2 10.3L.4 8.7A16.4 16.4 0 0 1 12 4z"/></svg>
     <div class="sb-mid" id="sideBtns">
       <button class="sb-btn mic" id="micBtn" aria-label="Ask Claude"></button>
+      <button class="sb-btn pcmic" id="pcMicBtn" aria-label="Use phone as PC microphone"></button>
     </div>
     <button class="sb-btn" id="dimBtn" aria-label="Dim screen"></button>
   </nav>
@@ -284,6 +318,25 @@
     <button type="button" id="vCancel">Cancel</button>
   </div>
 </div>
+<div class="sheet" id="micSetup" role="dialog" aria-label="Set up phone microphone">
+  <div class="sheet-card">
+    <h2>Use this phone as your PC's microphone</h2>
+    <p>Safari only allows the microphone on a secure connection. Set it up once:</p>
+    <ol>
+      <li>On the PC, install <b>VB‑Audio Virtual Cable</b> (free, vb-audio.com/Cable) and restart Desk Deck.</li>
+      <li>Tap <b>Get certificate</b> below, then <b>Allow</b>.</li>
+      <li>Settings → General → <b>VPN &amp; Device Management</b> → Desk Deck → <b>Install</b>.</li>
+      <li>Settings → General → About → <b>Certificate Trust Settings</b> → turn on <b>Desk Deck</b>.</li>
+      <li>Tap <b>Open secure Desk Deck</b>, then Share → <b>Add to Home Screen</b>. Use that icon from now on.</li>
+    </ol>
+    <p>In Discord, Zoom, OBS etc., choose <b>CABLE Output</b> as the microphone.</p>
+    <div class="sheet-btns">
+      <button type="button" id="msClose">Close</button>
+      <a id="msCert" href="/deskdeck-ca.cer">Get certificate</a>
+      <a id="msOpen" class="primary" href="#">Open secure Desk Deck</a>
+    </div>
+  </div>
+</div>
 <div id="toast"></div>
 
 <div id="pin">
@@ -316,6 +369,7 @@
     next: '<svg viewBox="0 0 24 24"><path fill="currentColor" d="M2.5 6.4v11.2c0 .7.8 1.1 1.3.7l7.7-5.6a.8.8 0 0 0 0-1.3L3.8 5.7c-.5-.4-1.3 0-1.3.7zM12 6.4v11.2c0 .7.8 1.1 1.3.7l7.7-5.6a.8.8 0 0 0 0-1.3l-7.7-5.7c-.5-.4-1.3 0-1.3.7z"/></svg>',
     prev: '<svg viewBox="0 0 24 24"><path fill="currentColor" d="M21.5 6.4v11.2c0 .7-.8 1.1-1.3.7l-7.7-5.6a.8.8 0 0 1 0-1.3l7.7-5.7c.5-.4 1.3 0 1.3.7zM12 6.4v11.2c0 .7-.8 1.1-1.3.7L3 12.7a.8.8 0 0 1 0-1.3l7.7-5.7c.5-.4 1.3 0 1.3.7z"/></svg>',
     mic: '<svg viewBox="0 0 24 24"><rect x="8.5" y="2.5" width="7" height="12" rx="3.5" fill="currentColor"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5v3.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>',
+    mic_off: '<svg viewBox="0 0 24 24"><rect x="8.5" y="2.5" width="7" height="12" rx="3.5" fill="currentColor"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5v3.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M4 3l16 18" stroke="#2c2c2e" stroke-width="4.5" stroke-linecap="round"/><path d="M4 3l16 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>',
     send: '<svg viewBox="0 0 24 24"><path d="M12 19V5M5.5 11.5 12 5l6.5 6.5" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>',
     note: '<svg viewBox="0 0 24 24"><path fill="currentColor" d="M19 3.2v11.3a3.3 3.3 0 1 1-2-3V7.6l-8 1.8v7.3a3.3 3.3 0 1 1-2-3V5.9c0-.5.3-.9.8-1l10-2.2c.6-.1 1.2.3 1.2.9z"/></svg>',
   };
@@ -510,12 +564,105 @@
     } finally { $('vSend').disabled = false; }
   };
 
+  // ---------- phone as the PC's microphone ----------
+  // Mic audio -> 16-bit PCM -> WebSocket -> PC helper -> "CABLE Input" (other apps use "CABLE Output").
+  const pm = { on: false, ws: null, ctx: null, stream: null, node: null, src: null, peak: 0, raf: 0 };
+  let httpsPort = null;
+  const pmBtn = $('pcMicBtn');
+  function pmUI(mode) {
+    pmBtn.classList.remove('starting', 'live');
+    if (mode) pmBtn.classList.add(mode);
+    pmBtn.innerHTML = mode === 'live' ? G.mic : G.mic_off;
+    pmBtn.setAttribute('aria-pressed', mode === 'live' ? 'true' : 'false');
+    if (mode !== 'live') pmBtn.style.setProperty('--lvl', 0);
+  }
+  pmUI(null);
+
+  function openMicSetup() {
+    const secure = httpsPort ? `https://${location.hostname}:${httpsPort}/?pin=${encodeURIComponent(pin)}` : null;
+    $('msOpen').href = secure || '#';
+    $('msOpen').style.display = secure ? '' : 'none';
+    $('msCert').style.display = secure ? '' : 'none';
+    $('micSetup').classList.add('show');
+  }
+  $('msClose').onclick = () => $('micSetup').classList.remove('show');
+
+  function pmStop(msg) {
+    const was = pm.on;
+    pm.on = false;
+    cancelAnimationFrame(pm.raf);
+    if (pm.ws) { pm.ws.onclose = null; try { pm.ws.close(); } catch {} }
+    if (pm.node) { pm.node.onaudioprocess = null; try { pm.node.disconnect(); } catch {} }
+    if (pm.src) try { pm.src.disconnect(); } catch {}
+    if (pm.stream) pm.stream.getTracks().forEach(t => t.stop());
+    if (pm.ctx) try { pm.ctx.close(); } catch {}
+    Object.assign(pm, { ws: null, ctx: null, stream: null, node: null, src: null, peak: 0 });
+    pmUI(null);
+    if (msg && was) toast(msg);
+  }
+
+  async function pmStart() {
+    if (!window.isSecureContext || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return openMicSetup();
+    pm.on = true; pmUI('starting');
+    // Create the audio context inside the tap, or iOS keeps it silent.
+    const AC = window.AudioContext || window.webkitAudioContext;
+    pm.ctx = new AC();
+    pm.ctx.resume();
+    try {
+      pm.stream = await navigator.mediaDevices.getUserMedia({
+        audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+    } catch (e) {
+      pmStop();
+      return toast('Allow microphone access for Desk Deck to use it as your PC mic');
+    }
+    if (!pm.on) return pmStop();
+
+    const ws = pm.ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/api/mic?pin=${encodeURIComponent(pin)}`);
+    ws.binaryType = 'arraybuffer';
+    let ready = false;
+    ws.onopen = () => ws.send(JSON.stringify({ rate: pm.ctx.sampleRate }));
+    ws.onmessage = e => {
+      let m = {}; try { m = JSON.parse(e.data); } catch {}
+      if (m.error) { pmStop(); toast(m.error); }
+      else if (m.ok) { ready = true; pmUI('live'); toast(`Mic on — PC apps hear it as "CABLE Output"`); }
+    };
+    ws.onclose = () => pmStop(ready ? 'Phone mic disconnected' : "Couldn't connect the mic to the PC");
+
+    pm.src = pm.ctx.createMediaStreamSource(pm.stream);
+    pm.node = pm.ctx.createScriptProcessor(1024, 1, 1);   // ~21 ms chunks
+    pm.node.onaudioprocess = e => {
+      const f = e.inputBuffer.getChannelData(0);
+      e.outputBuffer.getChannelData(0).fill(0);
+      const pcm = new Int16Array(f.length);
+      let peak = 0;
+      for (let i = 0; i < f.length; i++) {
+        const s = Math.max(-1, Math.min(1, f[i]));
+        pcm[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+        const a = s < 0 ? -s : s; if (a > peak) peak = a;
+      }
+      pm.peak = Math.max(peak, pm.peak * 0.85);
+      // If Wi-Fi stalls, drop audio rather than building up delay.
+      if (ready && ws.readyState === 1 && ws.bufferedAmount < 32000) ws.send(pcm.buffer);
+    };
+    pm.src.connect(pm.node);
+    pm.node.connect(pm.ctx.destination);   // a ScriptProcessor only runs while connected
+
+    const meter = () => {
+      pmBtn.style.setProperty('--lvl', Math.min(1, Math.sqrt(pm.peak)).toFixed(2));
+      pm.raf = requestAnimationFrame(meter);
+    };
+    meter();
+  }
+  pmBtn.onclick = () => pm.on ? pmStop() : pmStart();
+  // iOS pauses the page (and its mic) when you leave the app.
+  document.addEventListener('visibilitychange', () => { if (document.hidden && pm.on) pmStop(); });
+
   async function loadButtons() {
     acTiles = [];
     const list = await api('/api/buttons').then(r => r.json());
 
     const side = $('sideBtns');
-    side.querySelectorAll('.sb-btn:not(.mic)').forEach(n => n.remove());
+    side.querySelectorAll('.sb-btn:not(.mic):not(.pcmic)').forEach(n => n.remove());
     list.filter(b => b.place === 'sidebar').forEach(b => {
       const el = document.createElement('button');
       el.className = 'sb-btn';
@@ -634,6 +781,7 @@
       const s = await api('/api/state').then(r => r.json());
       media = s.media; mediaAt = Date.now();
       acState = s.audiocast || null; renderAudioCast();
+      httpsPort = (s.mic && s.mic.https_port) || null;
       $('conn').classList.remove('off');
       renderMedia();
     } catch (e) {

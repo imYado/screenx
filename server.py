@@ -3,18 +3,23 @@
 Serves the phone web app and gives it:
   * now playing info + play/pause/next/prev (Windows media controls)
   * a button pad whose actions are defined in config.json
+  * "phone as PC microphone" (over HTTPS, into a virtual audio cable)
 
 Run:  python server.py
 """
 
 import asyncio
+import base64
 import ctypes
+import hashlib
 import hmac
 import json
 import mimetypes
 import os
 import secrets
 import socket
+import ssl
+import struct
 import subprocess
 import sys
 import threading
@@ -515,6 +520,182 @@ class ClaudeVoice:
 CLAUDE = ClaudeVoice(CONFIG.get("claude", {}))
 
 
+# ---------------------------------------------------------------- phone as PC microphone
+
+class WebSocket:
+    """Just enough of RFC 6455 for the phone to stream audio to us."""
+
+    MAX = 1 << 20
+
+    def __init__(self, rfile, wfile):
+        self.r, self.w = rfile, wfile
+        self.wlock = threading.Lock()
+
+    def _read(self, n):
+        data = self.r.read(n)
+        if len(data) < n:
+            raise ConnectionError("closed")
+        return data
+
+    def recv(self):
+        """Returns ('text'|'binary', payload) or None when the socket closes."""
+        parts, kind = [], None
+        while True:
+            b0, b1 = self._read(2)
+            fin, op = b0 & 0x80, b0 & 0x0F
+            n = b1 & 0x7F
+            if n == 126:
+                n = struct.unpack(">H", self._read(2))[0]
+            elif n == 127:
+                n = struct.unpack(">Q", self._read(8))[0]
+            if n > self.MAX:
+                raise ConnectionError("frame too large")
+            mask = self._read(4) if b1 & 0x80 else None
+            data = self._read(n)
+            if mask:
+                data = _unmask(data, mask)
+            if op == 0x8:          # close
+                self._frame(0x8, b"")
+                return None
+            if op == 0x9:          # ping
+                self._frame(0xA, data)
+                continue
+            if op == 0xA:          # pong
+                continue
+            if op in (0x1, 0x2):
+                kind = "text" if op == 0x1 else "binary"
+            parts.append(data)
+            if fin:
+                return kind, b"".join(parts)
+
+    def _frame(self, op, data):
+        n = len(data)
+        head = bytes([0x80 | op]) + (bytes([n]) if n < 126 else
+                                     bytes([126]) + struct.pack(">H", n) if n < 65536 else
+                                     bytes([127]) + struct.pack(">Q", n))
+        with self.wlock:
+            self.w.write(head + data)
+            self.w.flush()
+
+    def send_json(self, obj):
+        self._frame(0x1, json.dumps(obj).encode("utf-8"))
+
+
+def _unmask(data, mask):
+    # XOR the whole payload at once via big ints: fast enough for ~2 KB audio frames.
+    n = len(data)
+    key = int.from_bytes((mask * (n // 4 + 1))[:n], "little")
+    return (int.from_bytes(data, "little") ^ key).to_bytes(n, "little")
+
+
+class PhoneMic:
+    """Plays the phone's microphone into a virtual audio cable on the PC.
+
+    With VB-Audio Virtual Cable installed, we play into "CABLE Input" and other apps
+    (Discord, Zoom, OBS...) pick "CABLE Output" as their microphone.
+    """
+
+    def __init__(self, cfg):
+        self.device = cfg.get("device", "CABLE Input")
+        self.state = {"connected": False, "device": None, "error": None}
+        self.current = None
+        self.lock = threading.Lock()
+
+    def find_device(self):
+        import sounddevice as sd
+        want = self.device.lower()
+        apis = sd.query_hostapis()
+        outs = [(i, d) for i, d in enumerate(sd.query_devices())
+                if d["max_output_channels"] > 0 and want in d["name"].lower()]
+        # MME converts sample rates for us, so the phone's 44.1/48 kHz always works.
+        outs.sort(key=lambda x: apis[x[1]["hostapi"]]["name"] != "MME")
+        return outs[0] if outs else None
+
+    def serve(self, ws, peer):
+        msg = ws.recv()
+        if not msg or msg[0] != "text":
+            return
+        hello = json.loads(msg[1] or b"{}")
+        rate = max(8000, min(96000, int(hello.get("rate", 48000))))
+
+        try:
+            import sounddevice as sd
+            found = self.find_device()
+        except Exception as e:
+            ws.send_json({"error": f"Audio output isn't available on the PC ({e})"})
+            return
+        if not found:
+            err = ("VB-Cable isn't installed on the PC. Get it free from vb-audio.com/Cable, "
+                   "then restart Desk Deck." if self.device.lower().startswith("cable")
+                   else f"No audio device named '{self.device}' on the PC.")
+            self.state.update(connected=False, error=err)
+            ws.send_json({"error": err})
+            return
+        dev_index, dev = found
+
+        token = object()
+        with self.lock:
+            self.current = token          # a newer connection takes over from an older one
+
+        buf = bytearray()
+        blk = threading.Lock()
+        bytes_per_s = rate * 2
+        prebuffer = bytes_per_s * 60 // 1000 & ~1       # wait for 60 ms before playing
+        ceiling = bytes_per_s * 250 // 1000 & ~1        # never lag more than 250 ms behind
+        target = bytes_per_s * 80 // 1000 & ~1
+        playing = [False]
+
+        def callback(out, frames, _time, _status):
+            need = frames * 2
+            with blk:
+                if not playing[0] and len(buf) < prebuffer:
+                    n = 0
+                else:
+                    playing[0] = True
+                    n = min(need, len(buf))
+                    out[:n] = bytes(buf[:n])
+                    del buf[:n]
+                    if not buf:
+                        playing[0] = False      # ran dry: re-buffer instead of crackling
+            if n < need:
+                out[n:need] = b"\0" * (need - n)
+
+        try:
+            stream = sd.RawOutputStream(samplerate=rate, channels=1, dtype="int16",
+                                        device=dev_index, latency="low", callback=callback)
+            stream.start()
+        except Exception as e:
+            err = f"Couldn't open '{dev['name']}': {e}"
+            self.state.update(connected=False, error=err)
+            ws.send_json({"error": err})
+            return
+
+        name = dev["name"].split(" (")[0]
+        self.state.update(connected=True, device=name, error=None)
+        print(f"[mic] phone {peer} is streaming its microphone into '{dev['name']}' ({rate} Hz)")
+        ws.send_json({"ok": True, "device": name})
+        try:
+            while self.current is token:
+                msg = ws.recv()
+                if msg is None:
+                    break
+                if msg[0] == "binary" and msg[1]:
+                    with blk:
+                        buf += msg[1][: len(msg[1]) & ~1]
+                        if len(buf) > ceiling:
+                            del buf[: len(buf) - target]
+        finally:
+            stream.stop()
+            stream.close()
+            if self.current is token:
+                self.state.update(connected=False)
+                print("[mic] phone microphone stopped")
+
+
+MIC = PhoneMic(CONFIG.get("mic", {}))
+TLS = {"port": None, "ca": None}
+
+
 # ---------------------------------------------------------------- button actions
 
 def run_action(action):
@@ -575,11 +756,19 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         url = urlparse(self.path)
         q = parse_qs(url.query)
+        if url.path == "/deskdeck-ca.cer" and TLS["ca"]:
+            # Public certificate only (no key); safe to hand out without the PIN.
+            from tls import ca_der
+            return self._send(200, ca_der(TLS["ca"]), "application/x-x509-ca-cert",
+                              {"Content-Disposition": 'attachment; filename="DeskDeck.cer"'})
         if url.path.startswith("/api/"):
             if not self._authed(q):
                 return self._send(401, {"error": "bad pin"})
+            if url.path == "/api/mic":
+                return self._websocket()
             if url.path == "/api/state":
-                return self._send(200, {"media": MEDIA.state, "audiocast": AUDIOCAST.state, "claude": CLAUDE.last})
+                return self._send(200, {"media": MEDIA.state, "audiocast": AUDIOCAST.state, "claude": CLAUDE.last,
+                                        "mic": {**MIC.state, "https_port": TLS["port"]}})
             if url.path == "/api/buttons":
                 return self._send(200, [
                     {**{k: b.get(k) for k in ("id", "label", "icon", "color", "glyph", "status")},
@@ -624,6 +813,23 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(500, {"error": str(e)})
         self._send(404, {"error": "not found"})
 
+    def _websocket(self):
+        key = self.headers.get("Sec-WebSocket-Key")
+        if "websocket" not in (self.headers.get("Upgrade") or "").lower() or not key:
+            return self._send(400, {"error": "websocket expected"})
+        accept = base64.b64encode(hashlib.sha1(
+            (key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").encode()).digest()).decode()
+        self.wfile.write(("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n"
+                          f"Connection: Upgrade\r\nSec-WebSocket-Accept: {accept}\r\n\r\n").encode())
+        self.wfile.flush()
+        self.close_connection = True
+        self.connection.settimeout(10)   # phone went to sleep / left Wi-Fi -> let go
+        try:
+            MIC.serve(WebSocket(self.rfile, self.wfile), self.client_address[0])
+        except (ConnectionError, OSError, ValueError) as e:
+            if not isinstance(e, ConnectionError):
+                print(f"[mic] connection ended: {e}")
+
     def _static(self, path):
         if path in ("", "/"):
             path = "/index.html"
@@ -656,6 +862,34 @@ class Server(ThreadingHTTPServer):
             self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
         super().server_bind()
 
+    def handle_error(self, request, client_address):
+        # Phones dropping off Wi-Fi or refusing our certificate are normal; don't print tracebacks.
+        err = sys.exc_info()[1]
+        if isinstance(err, (ConnectionError, ssl.SSLError, TimeoutError)):
+            return
+        super().handle_error(request, client_address)
+
+
+def start_https(port, ip):
+    try:
+        from tls import ensure_certs
+    except ImportError:
+        print("  [https] 'cryptography' isn't installed, so the phone mic is off. Run start.bat to install it.")
+        return None
+    try:
+        httpsd = Server(("0.0.0.0", port), Handler)
+    except OSError:
+        print(f"  [https] port {port} is in use, so the phone mic is off.")
+        return None
+    cert, key, ca = ensure_certs(ROOT, ip)
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    ctx.load_cert_chain(cert, key)
+    # Handshake in the request thread, so a slow or untrusting phone can't stall the server.
+    httpsd.socket = ctx.wrap_socket(httpsd.socket, server_side=True, do_handshake_on_connect=False)
+    TLS.update(port=port, ca=ca)
+    threading.Thread(target=httpsd.serve_forever, daemon=True).start()
+    return httpsd
+
 
 def main():
     port = int(os.environ.get("DESKDECK_PORT") or CONFIG.get("port", 8765))
@@ -668,11 +902,16 @@ def main():
     print("  Loading app logos...")
     load_logos()
     ip = lan_ip()
+    sport = int(os.environ.get("DESKDECK_HTTPS_PORT") or CONFIG.get("https_port", port + 1))
+    secure = start_https(sport, ip)
     print()
     print("  Desk Deck is running")
     print("  -------------------------------------------")
     print(f"  On your iPhone, open Safari and go to:")
     print(f"      http://{ip}:{port}")
+    if secure:
+        print(f"  With the phone mic (after installing the certificate, see README):")
+        print(f"      https://{ip}:{sport}")
     print(f"  PIN: {CONFIG['pin']}")
     print("  Then: Share -> Add to Home Screen")
     print("  (Keep this window open. Ctrl+C to stop.)")

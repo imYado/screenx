@@ -7,6 +7,7 @@ Turn an old iPhone X into a CarPlay‑style desk companion for your Windows PC:
 - 📱 **App launcher** with the apps' **real logos**, pulled straight from your PC (Spotify, Chrome, Claude, Steam, Files by default)
 - 📡 **AudioCast toggle**: tap to start/stop streaming PC audio to your phone, with live status (Streaming / Not connected / Off)
 - 🎙️ **Ask Claude**: the rainbow mic in the side bar. Speak (tap 🎤 on the iPhone keyboard) or type a command, and Claude on your PC opens a new Claude Code session with it and sends it
+- 🎤 **Phone as PC microphone**: tap the mic button in the side bar and your iPhone becomes a mic for Discord, Zoom, OBS, games…
 - 🔊 **Side bar** with volume up/down, a PC-connection indicator and a dim button
 
 It's a PWA that runs full‑screen on the phone, plus a small Python helper on the PC. The phone talks to the PC over your Wi‑Fi.
@@ -35,6 +36,25 @@ Needs the Claude desktop app. Desk Deck opens `claude://code/new` with your comm
 ```
 
 `folder` is where the new session works. Claude still asks on the PC before risky actions, as usual. Anyone with your Desk Deck PIN on your Wi‑Fi can send commands, so keep the PIN private.
+
+### Phone as PC microphone
+The crossed‑out mic in the side bar turns your iPhone into a microphone for the PC. It turns green and pulses with your voice while live. One-time setup:
+
+1. **On the PC:** install [VB‑Audio Virtual Cable](https://vb-audio.com/Cable/) (free; run its setup as administrator, then reboot). Restart Desk Deck.
+2. **On the iPhone:** Safari only allows the microphone over HTTPS, so Desk Deck also runs a secure address (the window shows it, e.g. `https://192.168.0.195:8766`). Tap the mic button once and follow the steps on screen:
+   - **Get certificate** → Allow, then Settings → General → **VPN & Device Management** → Desk Deck → **Install**
+   - Settings → General → About → **Certificate Trust Settings** → turn on **Desk Deck**
+   - **Open secure Desk Deck**, then Share → **Add to Home Screen**. Use this new icon from now on (you can delete the old one).
+3. **In your apps** (Discord, Zoom, OBS, Windows Sound settings…), choose **CABLE Output** as the microphone.
+
+Things to know:
+- The mic only runs while Desk Deck is open on the phone's screen; iOS stops it if you switch apps or lock the phone.
+- Delay is about 0.1–0.2 s over Wi‑Fi. iOS echo cancellation and noise suppression are on.
+- If AudioCast is playing PC sound through the phone's speaker, the mic may pick it up; use headphones on the PC or turn AudioCast off during calls.
+- iOS may ask for microphone permission each time you open the home-screen app.
+- To use a different virtual device, set `"mic": { "device": "part of its name" }` in `config.json`. The secure port is `"https_port"` (default: `port` + 1).
+
+The certificate is made on your PC (in the `certs` folder, git-ignored) and can only vouch for local network addresses, never real websites. Keep that folder private anyway, and delete it to make a new one (you'd then reinstall it on the phone).
 
 ### iPhone tips
 - Settings → Display & Brightness → **Auto‑Lock: Never**
