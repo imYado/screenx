@@ -1037,7 +1037,7 @@
     }
     $('title').textContent = m.title || 'Unknown';
     $('artist').textContent = m.artist || ' ';
-    $('appname').textContent = m.ad ? `${m.app} · Ad${m.ducked ? ' · volume lowered' : ''}` : (m.app || ' ');
+    $('appname').textContent = m.ad ? `${m.app} · Ad${m.ducked ? ' · muted' : ''}` : (m.app || ' ');
     $('bPP').innerHTML = m.playing ? G.pause : G.play;
     let pos = m.position;
     if (m.playing) pos += (Date.now() - mediaAt) / 1000;

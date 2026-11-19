@@ -297,12 +297,21 @@ class AdDucker:
     PC's main volume are left alone.
     """
 
+    # Spotify's real volume is kept on disk while it's turned down, so a crash, force-close
+    # or reboot mid-ad can't leave Spotify quiet: the next start puts it back.
+    SAVE = ROOT / "spotify_volume.json"
+
     def __init__(self, cfg):
         self.enabled = cfg.get("duck", True)
-        self.level = float(cfg.get("volume", 0.1))
+        self.level = float(cfg.get("volume", 0.0))
         self.saved = None          # Spotify's volume before the ad
         self.ducked = False
-        if self.enabled:
+        try:
+            self.saved = float(json.loads(self.SAVE.read_text())["volume"])
+            self.ducked = True     # left turned down last time: restore once the ad (if any) is over
+        except (OSError, ValueError, KeyError, TypeError):
+            pass
+        if self.enabled or self.ducked:
             threading.Thread(target=self._run, daemon=True).start()
 
     def _sessions(self):
@@ -322,29 +331,37 @@ class AdDucker:
         atexit.register(self._restore)
         while True:
             try:
-                ad = bool(MEDIA.state.get("ad"))
+                ad = self.enabled and bool(MEDIA.state.get("ad"))
                 if ad and not self.ducked:
                     vols = self._sessions()
                     if vols:
-                        self.saved = [v.GetMasterVolume() for v in vols]
+                        self.saved = vols[0].GetMasterVolume()
+                        self.SAVE.write_text(json.dumps({"volume": self.saved}))
                         for v in vols:
                             v.SetMasterVolume(min(self.level, v.GetMasterVolume()), None)
                         self.ducked = True
                         print("[ads] Spotify ad: volume lowered")
-                elif not ad and self.ducked:
-                    self._restore()
+                elif not ad and self.ducked and self._restore():
                     print("[ads] ad over: Spotify volume restored")
             except Exception as e:
                 print(f"[ads] {e}")
             time.sleep(0.5)
 
     def _restore(self):
+        """Puts Spotify back to its saved volume. False if Spotify isn't running yet (try again later)."""
         if not self.ducked:
-            return
+            return True
         vols = self._sessions()
-        for i, v in enumerate(vols):
-            v.SetMasterVolume((self.saved or [1.0])[min(i, len(self.saved or [1]) - 1)], None)
+        if not vols:
+            return False
+        for v in vols:
+            v.SetMasterVolume(1.0 if self.saved is None else self.saved, None)
         self.ducked = False
+        try:
+            self.SAVE.unlink()
+        except OSError:
+            pass
+        return True
 
 
 ADS = AdDucker(CONFIG.get("spotify_ads", {}))

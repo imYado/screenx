@@ -8,7 +8,7 @@ Turn an old iPhone X into a CarPlay‑style desk companion for your Windows PC:
 - 📡 **AudioCast toggle**: tap to start/stop streaming PC audio to your phone, with live status (Streaming / Not connected / Off)
 - 🎙️ **Ask Claude**: the rainbow mic in the side bar. Speak (tap 🎤 on the iPhone keyboard) or type a command, and Claude on your PC opens a new Claude Code session with it and sends it
 - 🎤 **Phone as PC microphone**: tap the mic button in the side bar and your iPhone becomes a mic for Discord, Zoom, OBS, games…
-- 🔇 **Spotify ads turned down automatically**: when Spotify plays an ad, only Spotify's volume drops to 10%, then goes back up when the music returns
+- 🔇 **Spotify ads turned down automatically**: when Spotify plays an ad, Spotify is silenced (only Spotify, nothing else), then its volume comes back when the music returns
 - ▦ **More** (bottom of the side bar): **Apps** shows every app on your PC with its real icon and a search box; **Controls** has sleep, lock, screens off, shut down / restart / sign out (with a 30 s cancel), screenshot, snip, screen recording, show desktop, Task Manager, second screen and more
 - 🔊 **Side bar** with volume up/down and a PC-connection indicator
 
@@ -70,13 +70,13 @@ Tap the ▦ button at the bottom of the side bar.
   - *This phone*: Dim Desk Deck (moved here from the side bar), Mic setup, Reload.
 
 ### Spotify ads
-While Spotify plays an ad, Desk Deck turns **Spotify's own volume** down (the Windows volume mixer slider; nothing else changes) and restores it when the ad ends. The now-playing card shows "Ad · volume lowered". Ads are recognised by Spotify reporting the artist as "Spotify" (or none). Settings in `config.json`:
+While Spotify plays an ad, Desk Deck mutes **Spotify's own volume** (the Windows volume mixer slider; nothing else changes) and restores it when the ad ends. The now-playing card shows "Ad · muted". Ads are recognised by Spotify reporting the artist as "Spotify" (or none). Settings in `config.json`:
 
 ```json
-"spotify_ads": { "duck": true, "volume": 0.1 }
+"spotify_ads": { "duck": true, "volume": 0 }
 ```
 
-`volume` is 0–1 (0 = silent). Set `duck` to `false` to turn it off.
+`volume` is 0–1 (default 0 = silent during ads). Set `duck` to `false` to turn it off. If Desk Deck is closed or crashes mid-ad, it puts Spotify's volume back the next time it starts.
 
 ### iPhone tips
 - Settings → Display & Brightness → **Auto‑Lock: Never**
